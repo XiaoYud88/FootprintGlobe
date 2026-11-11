@@ -39,6 +39,12 @@ final class VisitTracker {
     /// 最近一次「确认成功」的城市，供 UI 弹提示
     var onUnlock: ((Region) -> Void)?
 
+    /// 新的待确认到访（已经待了一会儿但还没达标），用于本地通知
+    var onNewPending: ((Region) -> Void)?
+
+    /// 同一次停留只提醒一次，避免每次采样都弹
+    private var notifiedPendings: Set<String> = []
+
     private static let configKey = "tracker.config"
 
     init(boundary: BoundaryStore, visits: VisitStore) {
@@ -84,6 +90,13 @@ final class VisitTracker {
         if qualifies(pending) {
             confirm(city, at: date)
             return
+        }
+
+        // 已经待了一会儿（≥1 小时、≥2 次采样）但还没到 3 小时：推一条「要记录吗」
+        if pending.sampleCount >= 2, pending.spanHours >= 1,
+           !notifiedPendings.contains(city.code) {
+            notifiedPendings.insert(city.code)
+            onNewPending?(city)
         }
 
         // 高速通过 + 停留过短：直接判为路过

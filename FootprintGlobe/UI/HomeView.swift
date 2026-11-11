@@ -12,12 +12,13 @@ struct HomeView: View {
     @State private var showCities = false
     @State private var showPending = false
     @State private var showSettings = false
+    @State private var showPassport = false
     @State private var editingCity: Region?
     @State private var permissionDismissed = false
 
     var body: some View {
         ZStack {
-            StarField()
+            StarField(isLight: Theme.isLight)
                 .ignoresSafeArea()
 
             GeometryReader { geo in
@@ -29,7 +30,9 @@ struct HomeView: View {
                                   visitedProvinceCodes: app.visitedProvinceCodes,
                                   visitedCities: app.visitedCities,
                                   pendingCities: pendingCities,
-                                  focus: app.focus)
+                                  focus: app.focus,
+                                  countries: WorldStore.shared.loadIfNeeded(),
+                                  appearance: app.appearance)
                             .transition(.opacity)
                     } else {
                         ChinaMapView(center: app.center,
@@ -41,7 +44,8 @@ struct HomeView: View {
                                      wishlistCityCodes: app.visits.wishlistCodes,
                                      pendingCityCodes: app.pendingCodes,
                                      visitedProvinceCodes: app.visitedProvinceCodes,
-                                     focus: app.focus)
+                                     focus: app.focus,
+                                     appearance: app.appearance)
                             .transition(.opacity)
                     }
                 }
@@ -66,12 +70,15 @@ struct HomeView: View {
             zoomRail
 
             toastLayer
+            celebrationLayer
         }
         .animation(.easeInOut(duration: 0.3), value: app.isGlobe)
         .animation(.easeInOut(duration: 0.22), value: app.toast)
+        .animation(.spring(response: 0.42, dampingFraction: 0.72), value: app.celebration)
         .sheet(isPresented: $showCities) { CityListView() }
         .sheet(isPresented: $showPending) { PendingListView() }
         .sheet(isPresented: $showSettings) { SettingsView() }
+        .sheet(isPresented: $showPassport) { PassportView().environmentObject(app) }
         .sheet(item: $editingCity) { city in
             CityRecordSheet(region: city)
                 .environmentObject(app)
@@ -129,7 +136,7 @@ struct HomeView: View {
             .padding(.vertical, 6)
             .padding(.horizontal, 6)
             .background(.ultraThinMaterial, in: Capsule())
-            .overlay(Capsule().stroke(Color.white.opacity(0.10), lineWidth: 1))
+            .overlay(Capsule().stroke(Theme.hairline, lineWidth: 1))
             .padding(.trailing, 12)
         }
     }
@@ -138,9 +145,10 @@ struct HomeView: View {
         Button(action: action) {
             Image(systemName: icon)
                 .font(.system(size: 13, weight: .bold))
-                .foregroundColor(.white)
+                .foregroundColor(Theme.textPrimary)
                 .frame(width: 30, height: 30)
-                .background(Color.white.opacity(0.06), in: Circle())
+                .background(Theme.isLight ? Color.black.opacity(0.05) : Color.white.opacity(0.06),
+                            in: Circle())
         }
         .buttonStyle(.plain)
     }
@@ -210,6 +218,7 @@ struct HomeView: View {
 
             Spacer(minLength: 2)
 
+            dockButton("rosette") { showPassport = true }
             dockButton("clock.badge.questionmark", badge: app.visits.pendings.count) {
                 showPending = true
             }
@@ -218,7 +227,7 @@ struct HomeView: View {
         }
         .padding(Theme.Layout.dockPadding)
         .background(.ultraThinMaterial, in: Capsule())
-        .overlay(Capsule().stroke(Color.white.opacity(0.10), lineWidth: 1))
+        .overlay(Capsule().stroke(Theme.hairline, lineWidth: 1))
     }
 
     private func dockButton(_ icon: String, badge: Int = 0,
@@ -227,9 +236,10 @@ struct HomeView: View {
             ZStack(alignment: .topTrailing) {
                 Image(systemName: icon)
                     .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(.white)
+                    .foregroundColor(Theme.textPrimary)
                     .frame(width: Theme.Layout.iconButton, height: Theme.Layout.iconButton)
-                    .background(Color.white.opacity(0.06), in: Circle())
+                    .background(Theme.isLight ? Color.black.opacity(0.05) : Color.white.opacity(0.06),
+                                in: Circle())
                 if badge > 0 {
                     Text("\(badge)")
                         .font(.system(size: 9, weight: .bold, design: .rounded))
@@ -305,6 +315,65 @@ struct HomeView: View {
         .allowsHitTesting(false)
     }
 
+    // MARK: - 点亮动画
+
+    @ViewBuilder
+    private var celebrationLayer: some View {
+        if let celebration = app.celebration {
+            ZStack {
+                Color.black.opacity(0.42)
+                    .ignoresSafeArea()
+                    .onTapGesture { app.dismissCelebration() }
+
+                VStack(spacing: 12) {
+                    ZStack {
+                        ForEach(0..<3, id: \.self) { ring in
+                            Circle()
+                                .stroke(Color.white.opacity(0.30 - Double(ring) * 0.08), lineWidth: 1)
+                                .frame(width: 62 + CGFloat(ring) * 26,
+                                       height: 62 + CGFloat(ring) * 26)
+                        }
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 26, weight: .semibold))
+                            .foregroundColor(.white)
+                    }
+                    Text("点亮")
+                        .font(.system(size: 12, weight: .semibold, design: .rounded))
+                        .tracking(4)
+                        .foregroundColor(.white.opacity(0.75))
+                    Text(celebration.cityName)
+                        .font(.system(size: 26, weight: .heavy, design: .rounded))
+                        .foregroundColor(.white)
+                    if !celebration.provinceName.isEmpty {
+                        Text(celebration.provinceName)
+                            .font(Theme.Typo.caption())
+                            .foregroundColor(.white.opacity(0.75))
+                    }
+                    if let milestone = celebration.milestone {
+                        Text(milestone)
+                            .font(.system(size: 12, weight: .semibold, design: .rounded))
+                            .foregroundColor(.black)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 5)
+                            .background(Theme.gold, in: Capsule())
+                            .padding(.top, 2)
+                    }
+                }
+                .padding(.horizontal, 34)
+                .padding(.vertical, 26)
+                .background(
+                    LinearGradient(colors: [Theme.brand, Theme.brandDim],
+                                   startPoint: .topLeading, endPoint: .bottomTrailing),
+                    in: RoundedRectangle(cornerRadius: 26, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 26, style: .continuous)
+                    .stroke(Color.white.opacity(0.22), lineWidth: 1))
+                .shadow(color: Theme.brand.opacity(0.55), radius: 26)
+                .transition(.scale(scale: 0.82).combined(with: .opacity))
+            }
+            .transition(.opacity)
+        }
+    }
+
     // MARK: - 手势
 
     private func dragGesture(size: CGSize) -> some Gesture {
@@ -363,8 +432,21 @@ struct ProgressRing: View {
 }
 
 struct StarField: View {
+    var isLight: Bool = false
+
     var body: some View {
         Canvas { context, size in
+            if isLight {
+                // 浅色主题下不要满天星，用一张干净的米白渐变纸
+                context.fill(Path(CGRect(origin: .zero, size: size)),
+                             with: .linearGradient(
+                                Gradient(colors: [Color(red: 0.995, green: 0.988, blue: 0.972),
+                                                  Theme.oceanDeep]),
+                                startPoint: .zero,
+                                endPoint: CGPoint(x: size.width, y: size.height)))
+                return
+            }
+
             context.fill(Path(CGRect(origin: .zero, size: size)),
                          with: .linearGradient(
                             Gradient(colors: [Color(red: 0.03, green: 0.035, blue: 0.06),
@@ -382,6 +464,7 @@ struct StarField: View {
                 context.fill(Path(ellipseIn: rect), with: .color(.white.opacity(alpha)))
             }
         }
+        .id(isLight)
     }
 
     private func nextRandom(_ seed: inout UInt64) -> Double {

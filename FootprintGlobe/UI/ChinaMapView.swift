@@ -13,11 +13,14 @@ struct ChinaMapView: View {
     let pendingCityCodes: Set<String>
     let visitedProvinceCodes: Set<String>
     let focus: GeoCoord?
+    /// 外观只用来触发重绘（Theme 是全局静态，Canvas 不会自己知道它变了）
+    var appearance: AppearanceMode = .dark
 
     var body: some View {
         Canvas { context, size in
             draw(in: context, size: size)
         }
+        .id(appearance)
         .accessibilityLabel("中国地图")
     }
 

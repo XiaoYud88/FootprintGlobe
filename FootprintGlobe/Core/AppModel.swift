@@ -28,11 +28,35 @@ final class AppModel: ObservableObject {
     /// 轻提示
     @Published var toast: String?
 
+    // MARK: 外观
+    /// 深色 / 浅色，由用户在「设置」里手选，不跟随系统。
+    @Published var appearance: AppearanceMode = .dark {
+        didSet {
+            guard oldValue != appearance else { return }
+            Theme.mode = appearance
+            UserDefaults.standard.set(appearance.rawValue, forKey: Self.appearanceKey)
+        }
+    }
+
+    static let appearanceKey = "appearance.mode"
+
+    // MARK: 点亮动画
+    struct Celebration: Identifiable, Equatable {
+        let id = UUID()
+        let cityName: String
+        let provinceName: String
+        let milestone: String?
+    }
+
+    /// 非 nil 时首页弹一次「点亮」庆祝
+    @Published var celebration: Celebration?
+
     // MARK: 数据
     let boundary = BoundaryStore.shared
     let visits: VisitStore
     let tracker: VisitTracker
     let location = LocationService()
+    let notifications = NotificationService.shared
 
     private var cancellables = Set<AnyCancellable>()
     private var started = false
@@ -41,6 +65,10 @@ final class AppModel: ObservableObject {
         let store = VisitStore()
         self.visits = store
         self.tracker = VisitTracker(boundary: BoundaryStore.shared, visits: store)
+
+        let savedMode = AppearanceMode(rawValue: UserDefaults.standard.string(forKey: Self.appearanceKey) ?? "")
+        self.appearance = savedMode ?? .dark
+        Theme.mode = savedMode ?? .dark
 
         // 把 VisitStore 的变化转发出去，视图只订阅 AppModel 就够了
         store.objectWillChange
@@ -51,7 +79,21 @@ final class AppModel: ObservableObject {
 
         tracker.onUnlock = { [weak self] region in
             self?.showToast("新解锁 · \(region.name)")
+            self?.celebrate(region)
         }
+
+        tracker.onNewPending = { [weak self] region in
+            guard let self, self.notifications.enabled else { return }
+            self.notifications.notifyNewPending(cityName: region.name, code: region.code)
+        }
+
+        notifications.$openPendingRequest
+            .sink { [weak self] open in
+                guard let self, open else { return }
+                self.showToast("有一条待确认的到访")
+                self.notifications.openPendingRequest = false
+            }
+            .store(in: &cancellables)
     }
 
     // MARK: - 生命周期
@@ -59,6 +101,7 @@ final class AppModel: ObservableObject {
     func start() {
         guard !started else { return }
         started = true
+        notifications.bootstrap()
         location.onUpdate = { [weak self] location in
             Task { @MainActor in self?.handle(location) }
         }
@@ -137,8 +180,9 @@ final class AppModel: ObservableObject {
             let pointsPerDegree = Double(size.width) / lonSpan
             guard pointsPerDegree > 0 else { return }
             let pointsPerLatDegree = pointsPerDegree / max(0.25, cos(center.lat * .pi / 180))
-            let lon = min(max(center.lon - Double(dx) / pointsPerDegree, 73), 136)
-            let lat = min(max(center.lat + Double(dy) / pointsPerLatDegree, 3), 54)
+            // M1 起地图不再只有中国：日本、南极都在盘子里，边界放到世界范围
+            let lon = min(max(center.lon - Double(dx) / pointsPerDegree, -180), 180)
+            let lat = min(max(center.lat + Double(dy) / pointsPerLatDegree, -62), 78)
             center = GeoCoord(lon: lon, lat: lat)
         }
     }
@@ -197,6 +241,23 @@ final class AppModel: ObservableObject {
         setZoom(0)
     }
 
+    /// 一键飞到某块区域（日本、南极、北极），护照页和清单里用。
+    func fly(to region: Region) {
+        stopMomentum()
+        autoFollow = false
+        center = region.center
+        let spanLon = region.bounds.maxLon - region.bounds.minLon
+        let spanLat = region.bounds.maxLat - region.bounds.minLat
+        let span = max(3.0, max(spanLon, spanLat) * 1.5)
+        let target = log2(200.0 / span)
+        setZoom(min(Self.maxZoom, max(Self.globeThreshold + 0.1, target)))
+    }
+
+    func flyToJapan() {
+        guard let japan = boundary.japanProvince else { return }
+        fly(to: japan)
+    }
+
     func focusOnMe() {
         autoFollow = true
         location.refreshNow()
@@ -219,17 +280,60 @@ final class AppModel: ObservableObject {
 
     func record(for code: String) -> Visit? { visits.visit(code) }
 
-    /// 城市清单里「填表保存」的唯一入口：第一次去的时间 + 备注 + 状态。
+    /// 城市清单里「填表保存」的唯一入口：第一次去的时间 + 备注 + 标签 + 星级 + 照片。
     @discardableResult
     func saveRecord(_ region: Region, status: VisitStatus,
-                    firstVisit: Date, note: String) -> Visit {
-        let saved = visits.saveRecord(region, status: status, firstVisit: firstVisit, note: note)
+                    firstVisit: Date, note: String,
+                    tags: [String] = [], rating: Int = 0,
+                    photos: [String] = []) -> Visit {
+        let wasVisited = visits.isVisited(region.code)
+        let saved = visits.saveRecord(region, status: status, firstVisit: firstVisit,
+                                      note: note, tags: tags, rating: rating, photos: photos)
         switch status {
-        case .visited: showToast("已记录 · \(region.name)")
-        case .wishlist: showToast("已加入想去 · \(region.name)")
+        case .visited:
+            showToast("已记录 · \(region.name)")
+            if !wasVisited { celebrate(region) }
+        case .wishlist:
+            showToast("已加入想去 · \(region.name)")
         }
         return saved
     }
+
+    // MARK: - 点亮动画
+
+    /// 记录成功后弹一次庆祝：城市名 + 省份 + 里程碑（第 10 个城市之类）。
+    func celebrate(_ region: Region, milestone: String? = nil) {
+        let provinceName = boundary.province(of: region)?.name ?? ""
+        let mark = milestone ?? milestoneText(nextCount: visits.cityCount)
+        celebration = Celebration(cityName: region.name,
+                                  provinceName: provinceName,
+                                  milestone: mark)
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 2_200_000_000)
+            guard let self else { return }
+            if self.celebration?.cityName == region.name { self.celebration = nil }
+        }
+    }
+
+    func dismissCelebration() { celebration = nil }
+
+    /// 只在「跨过整数关口」时给一句额外的话，避免每次都夸。
+    private func milestoneText(nextCount count: Int) -> String? {
+        switch count {
+        case 1: return "第一座城市，出发了"
+        case 5: return "第 5 座城市"
+        case 10: return "第 10 座城市 · 行者"
+        case 25: return "第 25 座城市 · 远行者"
+        case 50: return "第 50 座城市 · 游侠"
+        case 100: return "第 100 座城市 · 旅行家"
+        case 200: return "第 200 座城市 · 大地行者"
+        default: return nil
+        }
+    }
+
+    func setTags(_ tags: [String], for code: String) { visits.setTags(tags, for: code) }
+    func setRating(_ rating: Int, for code: String) { visits.setRating(rating, for: code) }
+    func setPhotos(_ photos: [String], for code: String) { visits.setPhotos(photos, for: code) }
 
     func removeRecord(_ region: Region) {
         visits.remove(code: region.code)
@@ -270,6 +374,14 @@ final class AppModel: ObservableObject {
     }
 
     var storyCount: Int { visits.storyCount }
+
+    var photoCount: Int { visits.photoCount }
+    var allTags: [String] { visits.allTags }
+
+    /// 一次汇总的统计快照（护照页 / 设置页 / 徽章共用）
+    var stats: TravelStats { TravelStats.make(boundary: boundary, store: visits) }
+
+    func badges(for stats: TravelStats) -> [BadgeState] { BadgeCatalog.evaluate(stats) }
 
     var progressText: String { "\(visits.cityCount) / \(boundary.cityCount)" }
 

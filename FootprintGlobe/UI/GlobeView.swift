@@ -29,7 +29,7 @@ struct OrthoProjection {
     }
 }
 
-/// 自绘 3D 地球：球体渐变 + 经纬网 + 中国轮廓 + 去过的地方发光。
+/// 自绘 3D 地球：球体渐变 + 经纬网 + 世界陆地 + 中国/日本/极地轮廓 + 去过的地方发光。
 /// 不依赖任何地图 SDK，只有离线边界数据。
 struct GlobeView: View {
     let center: GeoCoord
@@ -39,11 +39,16 @@ struct GlobeView: View {
     let visitedCities: [Region]
     let pendingCities: [Region]
     let focus: GeoCoord?
+    /// 世界陆地轮廓（只做背景，不参与判定）
+    var countries: [WorldCountry] = []
+    /// 外观只用来触发重绘（Theme 是全局静态，Canvas 不会自己知道它变了）
+    var appearance: AppearanceMode = .dark
 
     var body: some View {
         Canvas { context, size in
             draw(in: context, size: size)
         }
+        .id(appearance)
         .accessibilityLabel("3D 地球")
     }
 
@@ -63,8 +68,9 @@ struct GlobeView: View {
         }
 
         // 球体本体
+        let topColor = Theme.isLight ? Theme.ocean : Color(red: 0.10, green: 0.13, blue: 0.22)
         context.fill(sphere, with: .radialGradient(
-            Gradient(colors: [Color(red: 0.10, green: 0.13, blue: 0.22), Theme.oceanDeep]),
+            Gradient(colors: [topColor, Theme.oceanDeep]),
             center: CGPoint(x: origin.x - radius * 0.35, y: origin.y - radius * 0.38),
             startRadius: 0,
             endRadius: radius * 1.55))
@@ -75,11 +81,36 @@ struct GlobeView: View {
         surface.clip(to: sphere)
 
         drawGraticule(in: surface, projection: projection)
+        drawWorld(in: surface, projection: projection)
         drawLand(in: surface, projection: projection)
+        drawPolarCircle(in: surface, projection: projection)
         drawMarkers(in: surface, projection: projection)
         drawShading(in: surface, origin: origin, radius: radius, sphere: sphere)
 
         context.stroke(sphere, with: .color(Theme.brand.opacity(0.40)), lineWidth: 0.8)
+    }
+
+    // MARK: - 世界背景陆地
+
+    private func drawWorld(in context: GraphicsContext, projection: OrthoProjection) {
+        guard !countries.isEmpty else { return }
+        var path = Path()
+        for country in countries {
+            path.addPath(polyline(rings: country.rings, stride: 2, projection: projection))
+        }
+        context.fill(path, with: .color(Theme.landDim.opacity(Theme.isLight ? 0.50 : 0.32)))
+        context.stroke(path, with: .color(Theme.border.opacity(0.20)), lineWidth: 0.3)
+    }
+
+    /// 北极圈：北极没有陆地边界，用一条虚线标出位置，让地球上方不空着。
+    private func drawPolarCircle(in context: GraphicsContext, projection: OrthoProjection) {
+        var path = Path()
+        append(&path, projection: projection,
+               points: stride(from: -180.0, through: 180.0, by: 3.0).map {
+                   GeoCoord(lon: $0, lat: 66.56)
+               })
+        context.stroke(path, with: .color(Theme.brandLight.opacity(0.45)),
+                       style: StrokeStyle(lineWidth: 0.7, dash: [4, 4]))
     }
 
     // MARK: - 经纬网
@@ -152,8 +183,10 @@ struct GlobeView: View {
         if let focus = focus {
             let (point, visible) = projection.project(focus)
             if visible {
-                context.stroke(dotPath(at: point, radius: 6), with: .color(.white.opacity(0.75)), lineWidth: 1.2)
-                context.fill(dotPath(at: point, radius: 2.6), with: .color(.white))
+                let ink: Color = Theme.isLight ? Color.black.opacity(0.65) : .white
+                context.stroke(dotPath(at: point, radius: 6), with: .color(ink.opacity(0.75)),
+                               lineWidth: 1.2)
+                context.fill(dotPath(at: point, radius: 2.6), with: .color(ink))
             }
         }
     }
@@ -170,7 +203,7 @@ struct GlobeView: View {
         context.fill(sphere, with: .radialGradient(
             Gradient(stops: [
                 .init(color: .clear, location: 0.45),
-                .init(color: Color.black.opacity(0.55), location: 1.0)
+                .init(color: Color.black.opacity(Theme.isLight ? 0.16 : 0.55), location: 1.0)
             ]),
             center: CGPoint(x: origin.x - radius * 0.28, y: origin.y - radius * 0.30),
             startRadius: radius * 0.2,
@@ -179,7 +212,7 @@ struct GlobeView: View {
         // 左上方高光
         context.fill(sphere, with: .radialGradient(
             Gradient(stops: [
-                .init(color: Color.white.opacity(0.10), location: 0),
+                .init(color: Color.white.opacity(Theme.isLight ? 0.42 : 0.10), location: 0),
                 .init(color: .clear, location: 0.55)
             ]),
             center: CGPoint(x: origin.x - radius * 0.42, y: origin.y - radius * 0.45),

@@ -108,6 +108,28 @@ enum GeoMath {
         return ret
     }
 
+    /// 一个环围出来的球面面积（平方公里）。
+    ///
+    /// 用梯形积分的球面面积公式，对经纬度环直接求和；结果取绝对值，
+    /// 所以环的绕向（顺时针/逆时针）不影响结果。用于「点亮面积占比」。
+    static func ringAreaKm2(_ ring: [GeoCoord]) -> Double {
+        guard ring.count >= 3 else { return 0 }
+        let radiusKm = earthRadius / 1000.0
+        var total = 0.0
+        for i in 0..<ring.count {
+            let a = ring[i]
+            let b = ring[(i + 1) % ring.count]
+            let latA = a.lat * .pi / 180
+            let latB = b.lat * .pi / 180
+            var dLon = (b.lon - a.lon) * .pi / 180
+            // 跨 ±180° 的环先归一化，避免算出整个地球
+            if dLon > .pi { dLon -= 2 * .pi }
+            if dLon < -.pi { dLon += 2 * .pi }
+            total += dLon * (2 + sin(latA) + sin(latB))
+        }
+        return abs(total * radiusKm * radiusKm / 2)
+    }
+
     /// 两点间球面距离（公里）。
     static func kilometers(_ a: GeoCoord, _ b: GeoCoord) -> Double {
         let dLat = (b.lat - a.lat) / 180.0 * .pi

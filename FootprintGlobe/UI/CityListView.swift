@@ -6,6 +6,7 @@ struct CityListView: View {
 
     @State private var query = ""
     @State private var filter: Filter = .all
+    @State private var tagFilter: String?
     @State private var editing: Region?
 
     enum Filter: String, CaseIterable, Identifiable {
@@ -27,6 +28,9 @@ struct CityListView: View {
         NavigationStack {
             VStack(spacing: 0) {
                 summaryBar
+                if !app.allTags.isEmpty {
+                    tagBar
+                }
                 if sections.isEmpty {
                     emptyState
                 } else {
@@ -35,7 +39,7 @@ struct CityListView: View {
             }
             .background(Theme.oceanDeep)
             .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always),
-                        prompt: "搜索城市，也可以搜备注里的字")
+                        prompt: "搜索城市，也可以搜备注和标签")
             .navigationTitle("城市清单")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -61,7 +65,7 @@ struct CityListView: View {
                     .environmentObject(app)
             }
         }
-        .preferredColorScheme(.dark)
+        .preferredColorScheme(Theme.colorScheme)
     }
 
     /// 顶部概览：以后要加统计（按年份、按省份）就往这条带上加，不动列表结构
@@ -72,6 +76,8 @@ struct CityListView: View {
             summaryItem("\(app.visits.provinceCount)", "省份")
             divider
             summaryItem("\(app.storyCount)", "有故事")
+            divider
+            summaryItem("\(app.photoCount)", "照片")
             Spacer(minLength: 0)
         }
         .padding(.horizontal, Theme.Layout.pagePadding)
@@ -81,20 +87,50 @@ struct CityListView: View {
 
     private var divider: some View {
         Rectangle()
-            .fill(Color.white.opacity(0.08))
+            .fill(Theme.hairline)
             .frame(width: 1, height: 22)
-            .padding(.horizontal, 14)
+            .padding(.horizontal, 12)
     }
 
     private func summaryItem(_ value: String, _ title: String) -> some View {
         VStack(alignment: .leading, spacing: 1) {
             Text(value)
                 .font(Theme.Typo.number())
-                .foregroundColor(.white)
+                .foregroundColor(Theme.textPrimary)
             Text(title)
                 .font(Theme.Typo.caption())
                 .foregroundColor(Theme.textTertiary)
         }
+    }
+
+    // MARK: - 标签筛选
+
+    private var tagBar: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                tagChip("全部标签", selected: tagFilter == nil) { tagFilter = nil }
+                ForEach(app.allTags, id: \.self) { tag in
+                    tagChip(tag, selected: tagFilter == tag) {
+                        tagFilter = (tagFilter == tag) ? nil : tag
+                    }
+                }
+            }
+            .padding(.horizontal, Theme.Layout.pagePadding)
+            .padding(.vertical, 8)
+        }
+        .background(Theme.card.opacity(0.3))
+    }
+
+    private func tagChip(_ title: String, selected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 11, weight: selected ? .semibold : .regular, design: .rounded))
+                .foregroundColor(selected ? .black : Theme.textSecondary)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(selected ? Theme.brandLight : Theme.landDim, in: Capsule())
+        }
+        .buttonStyle(.plain)
     }
 
     private var list: some View {
@@ -125,6 +161,10 @@ struct CityListView: View {
         return app.boundary.provincesSorted.compactMap { province in
             let cities = app.boundary.cities(of: province.code).filter { city in
                 guard keyword.isEmpty || matches(city, keyword) else { return false }
+                if let tagFilter,
+                   !(app.visits.visit(city.code)?.tags.contains(tagFilter) ?? false) {
+                    return false
+                }
                 switch filter {
                 case .all: return true
                 case .visited: return app.visits.isVisited(city.code)
@@ -139,10 +179,9 @@ struct CityListView: View {
 
     private func matches(_ city: Region, _ keyword: String) -> Bool {
         if city.name.contains(keyword) { return true }
-        if let note = app.visits.visit(city.code)?.trimmedNote, note.contains(keyword) {
-            return true
-        }
-        return false
+        guard let visit = app.visits.visit(city.code) else { return false }
+        if visit.trimmedNote.contains(keyword) { return true }
+        return visit.tags.contains { $0.contains(keyword) }
     }
 
     private var emptyState: some View {
@@ -152,7 +191,7 @@ struct CityListView: View {
                 .foregroundColor(Theme.textTertiary)
             Text(filter == .visited ? "还没有记录过城市" : "没有匹配的城市")
                 .font(Theme.Typo.label())
-            Text("点任意城市可以填「第一次去的时间」和故事。")
+            Text("点任意城市可以填「第一次去的时间」、故事、照片和标签。")
                 .font(Theme.Typo.caption())
                 .foregroundColor(Theme.textSecondary)
         }
@@ -180,7 +219,7 @@ struct CityListView: View {
                         Text(city.name)
                             .font(.system(size: 14, weight: isVisited ? .semibold : .regular,
                                           design: .rounded))
-                            .foregroundColor(status == .none ? Theme.textSecondary : .white)
+                            .foregroundColor(status == .none ? Theme.textSecondary : Theme.textPrimary)
                         if app.pendingCodes.contains(city.code) {
                             Text("候选")
                                 .font(.system(size: 10, weight: .bold, design: .rounded))
@@ -196,15 +235,41 @@ struct CityListView: View {
                                 .foregroundColor(Theme.brandLight.opacity(0.85))
                         }
                     }
-                    if let visit, isVisited, visit.hasNote {
-                        Text(visit.trimmedNote)
-                            .font(Theme.Typo.caption())
-                            .foregroundColor(Theme.textTertiary)
-                            .lineLimit(1)
+
+                    if let visit, isVisited {
+                        HStack(spacing: 6) {
+                            if visit.hasNote {
+                                Text(visit.trimmedNote)
+                                    .font(Theme.Typo.caption())
+                                    .foregroundColor(Theme.textTertiary)
+                                    .lineLimit(1)
+                            } else {
+                                Text(Theme.statusText(status))
+                                    .font(Theme.Typo.caption())
+                                    .foregroundColor(Theme.textTertiary)
+                            }
+                            if visit.rating > 0 {
+                                Text(String(repeating: "★", count: visit.rating))
+                                    .font(.system(size: 9.5))
+                                    .foregroundColor(Theme.gold)
+                            }
+                            if visit.hasPhotos {
+                                Image(systemName: "photo.fill")
+                                    .font(.system(size: 9))
+                                    .foregroundColor(Theme.brandLight)
+                            }
+                        }
                     } else {
                         Text(visit == nil ? "没去过" : Theme.statusText(status))
                             .font(Theme.Typo.caption())
                             .foregroundColor(Theme.textTertiary)
+                    }
+
+                    if let visit, isVisited, !visit.tags.isEmpty {
+                        Text(visit.tagLine)
+                            .font(.system(size: 10, design: .rounded))
+                            .foregroundColor(Theme.brandLight.opacity(0.9))
+                            .lineLimit(1)
                     }
                 }
 

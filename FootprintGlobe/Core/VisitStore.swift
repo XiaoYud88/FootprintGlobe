@@ -84,6 +84,9 @@ final class VisitStore: ObservableObject {
     }
 
     func remove(code: String) {
+        if let visit = visits[code] {
+            for name in visit.photos { PhotoStore.shared.delete(name) }
+        }
         visits.removeValue(forKey: code)
         save()
     }
@@ -175,7 +178,9 @@ final class VisitStore: ObservableObject {
     /// 这是城市清单里点开表单后唯一的写入口——点了保存才算进「去过」。
     @discardableResult
     func saveRecord(_ region: Region, status: VisitStatus,
-                    firstVisit: Date, note: String) -> Visit {
+                    firstVisit: Date, note: String,
+                    tags: [String] = [], rating: Int = 0,
+                    photos: [String] = []) -> Visit {
         let trimmed = note.trimmingCharacters(in: .whitespacesAndNewlines)
         var visit = visits[region.code] ?? Visit(code: region.code,
                                                 cityName: region.name,
@@ -193,6 +198,9 @@ final class VisitStore: ObservableObject {
         visit.firstSeen = firstVisit
         visit.lastSeen = max(visit.lastSeen, firstVisit)
         visit.note = trimmed
+        visit.tags = tags
+        visit.rating = min(max(rating, 0), 5)
+        visit.photos = Array(photos.prefix(Theme.Layout.maxPhotosPerCity))
         visit.isManual = true
         visits[region.code] = visit
         if status == .visited {
@@ -200,6 +208,42 @@ final class VisitStore: ObservableObject {
         }
         save()
         return visit
+    }
+
+    /// 标签 / 星级 / 照片的局部更新（记录面板里改完立刻生效，不用整条重存）
+    func setTags(_ tags: [String], for code: String) {
+        guard var visit = visits[code] else { return }
+        visit.tags = tags
+        visits[code] = visit
+        save()
+    }
+
+    func setRating(_ rating: Int, for code: String) {
+        guard var visit = visits[code] else { return }
+        visit.rating = min(max(rating, 0), 5)
+        visits[code] = visit
+        save()
+    }
+
+    func setPhotos(_ photos: [String], for code: String) {
+        guard var visit = visits[code] else { return }
+        visit.photos = Array(photos.prefix(Theme.Layout.maxPhotosPerCity))
+        visits[code] = visit
+        save()
+    }
+
+    var photoCount: Int { visits.values.reduce(0) { $0 + $1.photoCount } }
+    var taggedCount: Int { visits.values.filter { !$0.tags.isEmpty }.count }
+
+    /// 所有用过的标签，按出现次数倒序，给筛选栏用
+    var allTags: [String] {
+        var counts: [String: Int] = [:]
+        for visit in visits.values {
+            for tag in visit.tags { counts[tag, default: 0] += 1 }
+        }
+        return counts.sorted { a, b in
+            a.value == b.value ? a.key < b.key : a.value > b.value
+        }.map { $0.key }
     }
 
     /// 有备注（故事）的城市数量

@@ -17,9 +17,9 @@
 	<key>CFBundlePackageType</key>
 	<string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.2.0</string>
+	<string>0.3.0</string>
 	<key>CFBundleVersion</key>
-	<string>2</string>
+	<string>3</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>UIApplicationSceneManifest</key>
@@ -34,17 +34,19 @@
 		<string>arm64</string>
 	</array>
 	<key>UIStatusBarStyle</key>
-	<string>UIStatusBarStyleLightContent</string>
+	<string>UIStatusBarStyleDefault</string>
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>
 	</array>
 	<key>UIUserInterfaceStyle</key>
-	<string>Dark</string>
+	<string>Automatic</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>location</string>
 	</array>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>用来给城市添加最多 3 张照片。照片只存在你自己的手机上，不会上传，也不需要账号。</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>用来自动记录你去过的城市。位置只在本机计算，不会上传，也不需要账号。</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
