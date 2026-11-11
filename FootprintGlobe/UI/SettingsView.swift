@@ -73,6 +73,12 @@ struct SettingsView: View {
                         Text("\(app.visits.pendingList.count)")
                             .foregroundColor(Theme.textSecondary)
                     }
+                    HStack {
+                        Text("有故事的城市")
+                        Spacer()
+                        Text("\(app.storyCount)")
+                            .foregroundColor(Theme.textSecondary)
+                    }
                     Button("清空所有记录", role: .destructive) {
                         showResetConfirm = true
                     }
@@ -85,7 +91,7 @@ struct SettingsView: View {
                     HStack {
                         Text("版本")
                         Spacer()
-                        Text("0.1.0 (M0)")
+                        Text("0.2.0 (M0-V2)")
                             .foregroundColor(Theme.textTertiary)
                     }
                 } header: {

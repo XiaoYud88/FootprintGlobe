@@ -3,11 +3,17 @@ import SwiftUI
 struct HomeView: View {
     @EnvironmentObject private var app: AppModel
 
+    // 手势
     @State private var lastDrag: CGSize = .zero
+    @State private var dragging = false
     @State private var pinchBase: Double?
+
+    // 弹层
     @State private var showCities = false
     @State private var showPending = false
     @State private var showSettings = false
+    @State private var editingCity: Region?
+    @State private var permissionDismissed = false
 
     var body: some View {
         ZStack {
@@ -42,27 +48,34 @@ struct HomeView: View {
                 .contentShape(Rectangle())
                 .gesture(SimultaneousGesture(dragGesture(size: geo.size), pinchGesture))
                 .onTapGesture(count: 2) {
-                    app.setZoom(app.zoom + 1.1)
+                    app.stepZoom(1.1)
                 }
             }
             .ignoresSafeArea()
 
+            // 顶部 / 底部 HUD（固定槽位，后面加组件只往里塞，不改结构）
             VStack(spacing: 0) {
                 header
                 Spacer(minLength: 0)
-                footer
+                bottomStack
             }
-            .padding(.horizontal, 18)
-            .padding(.top, 6)
-            .padding(.bottom, 10)
+            .padding(.horizontal, Theme.Layout.pagePadding)
+            .padding(.top, 4)
+            .padding(.bottom, Theme.Layout.floatGap)
+
+            zoomRail
 
             toastLayer
         }
         .animation(.easeInOut(duration: 0.3), value: app.isGlobe)
-        .animation(.easeInOut(duration: 0.25), value: app.toast)
+        .animation(.easeInOut(duration: 0.22), value: app.toast)
         .sheet(isPresented: $showCities) { CityListView() }
         .sheet(isPresented: $showPending) { PendingListView() }
         .sheet(isPresented: $showSettings) { SettingsView() }
+        .sheet(item: $editingCity) { city in
+            CityRecordSheet(region: city)
+                .environmentObject(app)
+        }
         .task { app.start() }
     }
 
@@ -70,108 +83,163 @@ struct HomeView: View {
         app.visits.pendingList.compactMap { app.boundary.city(code: $0.code) }
     }
 
-    // MARK: - 顶部
+    // MARK: - 顶部槽位
 
     private var header: some View {
-        HStack(alignment: .top, spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
+        HStack(alignment: .center, spacing: 10) {
+            VStack(alignment: .leading, spacing: 3) {
                 Text("足迹地球")
-                    .font(.system(size: 25, weight: .bold, design: .rounded))
-                    .tracking(1.5)
-                Text("\(app.progressText) 城市 · \(app.visits.provinceCount) 省份")
-                    .font(.system(size: 12, weight: .medium, design: .rounded))
+                    .font(Theme.Typo.title())
+                    .tracking(1.2)
+                Text(subtitle)
+                    .font(Theme.Typo.subtitle())
                     .foregroundColor(Theme.textSecondary)
+                    .lineLimit(1)
             }
-            Spacer()
-            ProgressRing(progress: app.cityProgress)
-                .frame(width: 36, height: 36)
-            iconButton("list.bullet") { showCities = true }
-            iconButton("gearshape.fill") { showSettings = true }
+            Spacer(minLength: 4)
+            Button {
+                showCities = true
+            } label: {
+                ProgressRing(progress: app.cityProgress)
+                    .frame(width: Theme.Layout.iconButton,
+                           height: Theme.Layout.iconButton)
+            }
+            .buttonStyle(.plain)
         }
     }
 
-    private func iconButton(_ icon: String, action: @escaping () -> Void) -> some View {
+    private var subtitle: String {
+        "\(app.visits.cityCount)/\(app.boundary.cityCount) 城市 · \(app.visits.provinceCount) 省 · \(app.storyCount) 段故事"
+    }
+
+    // MARK: - 右侧缩放导轨
+
+    private var zoomRail: some View {
+        HStack {
+            Spacer()
+            VStack(spacing: 6) {
+                railButton("plus") { app.stepZoom(0.7) }
+                Text(app.levelText)
+                    .font(.system(size: 10, weight: .bold, design: .rounded))
+                    .foregroundColor(app.isGlobe ? Theme.textSecondary : Theme.brandLight)
+                    .frame(width: 40, height: 22)
+                    .background(Theme.card.opacity(0.75), in: Capsule())
+                railButton("minus") { app.stepZoom(-0.7) }
+            }
+            .padding(.vertical, 6)
+            .padding(.horizontal, 6)
+            .background(.ultraThinMaterial, in: Capsule())
+            .overlay(Capsule().stroke(Color.white.opacity(0.10), lineWidth: 1))
+            .padding(.trailing, 12)
+        }
+    }
+
+    private func railButton(_ icon: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: icon)
-                .font(.system(size: 14, weight: .semibold))
+                .font(.system(size: 13, weight: .bold))
                 .foregroundColor(.white)
-                .frame(width: 36, height: 36)
-                .background(.ultraThinMaterial, in: Circle())
-                .overlay(Circle().stroke(Color.white.opacity(0.10), lineWidth: 1))
+                .frame(width: 30, height: 30)
+                .background(Color.white.opacity(0.06), in: Circle())
         }
         .buttonStyle(.plain)
     }
 
-    // MARK: - 底部
+    // MARK: - 底部槽位
 
-    private var footer: some View {
-        VStack(spacing: 10) {
+    private var bottomStack: some View {
+        VStack(spacing: Theme.Layout.floatGap) {
             if let city = app.currentCity {
                 currentCityChip(city)
             }
-            if app.location.needsPermissionPrompt {
+            if showPermissionCard {
                 permissionCard
             }
-            controlBar
+            dock
         }
+    }
+
+    private var showPermissionCard: Bool {
+        app.location.needsPermissionPrompt && !permissionDismissed
     }
 
     private func currentCityChip(_ city: Region) -> some View {
-        HStack(spacing: 8) {
-            Circle()
-                .fill(app.visits.isVisited(city.code) ? Theme.brand : Theme.pending)
-                .frame(width: 7, height: 7)
-            Text(city.name)
-                .font(.system(size: 13, weight: .semibold, design: .rounded))
-            Text(app.visits.isVisited(city.code) ? "已记录" : "候选确认中")
-                .font(.system(size: 11, weight: .medium, design: .rounded))
-                .foregroundColor(Theme.textSecondary)
+        let visit = app.visits.visit(city.code)
+        let isVisited = visit?.status == .visited
+        return Button {
+            editingCity = city
+        } label: {
+            HStack(spacing: 8) {
+                Circle()
+                    .fill(isVisited ? Theme.brand : Theme.pending)
+                    .frame(width: 7, height: 7)
+                Text(city.name)
+                    .font(.system(size: 13, weight: .semibold, design: .rounded))
+                Text(isVisited ? (visit?.firstVisitText ?? "已记录") : "候选确认中")
+                    .font(Theme.Typo.caption())
+                    .foregroundColor(Theme.textSecondary)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundColor(Theme.textTertiary)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 9)
+            .background(.ultraThinMaterial, in: Capsule())
+            .overlay(Capsule().stroke(Color.white.opacity(0.08), lineWidth: 1))
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
-        .background(.ultraThinMaterial, in: Capsule())
-        .overlay(Capsule().stroke(Color.white.opacity(0.08), lineWidth: 1))
+        .buttonStyle(.plain)
     }
 
-    private var controlBar: some View {
-        HStack(spacing: 10) {
-            barButton(app.isGlobe ? "plus.magnifyingglass" : "globe.asia.australia.fill",
-                      app.isGlobe ? "进入中国" : "回到地球") {
+    private var dock: some View {
+        HStack(spacing: 6) {
+            Button {
                 if app.isGlobe { app.enterChina() } else { app.backToGlobe() }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: app.isGlobe ? "plus.magnifyingglass" : "globe.asia.australia.fill")
+                        .font(.system(size: 12, weight: .bold))
+                    Text(app.isGlobe ? "进入中国" : "回到地球")
+                        .font(.system(size: 12.5, weight: .bold, design: .rounded))
+                }
+                .foregroundColor(.black)
+                .padding(.horizontal, 14)
+                .frame(height: Theme.Layout.controlHeight)
+                .background(Theme.brandLight, in: Capsule())
             }
-            barButton("clock.badge.questionmark", "待确认", badge: app.visits.pendings.count) {
+            .buttonStyle(.plain)
+
+            Spacer(minLength: 2)
+
+            dockButton("clock.badge.questionmark", badge: app.visits.pendings.count) {
                 showPending = true
             }
-            barButton("location.fill", nil) {
-                app.focusOnMe()
-            }
+            dockButton("list.bullet") { showCities = true }
+            dockButton("gearshape.fill") { showSettings = true }
         }
+        .padding(Theme.Layout.dockPadding)
+        .background(.ultraThinMaterial, in: Capsule())
+        .overlay(Capsule().stroke(Color.white.opacity(0.10), lineWidth: 1))
     }
 
-    private func barButton(_ icon: String, _ title: String?, badge: Int = 0,
-                           action: @escaping () -> Void) -> some View {
+    private func dockButton(_ icon: String, badge: Int = 0,
+                            action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            HStack(spacing: 6) {
+            ZStack(alignment: .topTrailing) {
                 Image(systemName: icon)
-                    .font(.system(size: 13, weight: .semibold))
-                if let title {
-                    Text(title)
-                        .font(.system(size: 13, weight: .semibold, design: .rounded))
-                }
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(.white)
+                    .frame(width: Theme.Layout.iconButton, height: Theme.Layout.iconButton)
+                    .background(Color.white.opacity(0.06), in: Circle())
                 if badge > 0 {
                     Text("\(badge)")
-                        .font(.system(size: 11, weight: .bold, design: .rounded))
+                        .font(.system(size: 9, weight: .bold, design: .rounded))
                         .foregroundColor(.black)
-                        .padding(.horizontal, 5)
+                        .padding(.horizontal, 4)
                         .padding(.vertical, 1)
                         .background(Theme.pending, in: Capsule())
+                        .offset(x: 3, y: -3)
                 }
             }
-            .foregroundColor(.white)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 11)
-            .background(.ultraThinMaterial, in: Capsule())
-            .overlay(Capsule().stroke(Color.white.opacity(0.10), lineWidth: 1))
         }
         .buttonStyle(.plain)
     }
@@ -180,12 +248,23 @@ struct HomeView: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 Image(systemName: "location.slash.fill")
+                    .font(.system(size: 12, weight: .semibold))
                     .foregroundColor(Theme.pending)
                 Text("开启定位才能自动打卡")
-                    .font(.system(size: 13, weight: .semibold, design: .rounded))
+                    .font(Theme.Typo.label())
+                Spacer(minLength: 0)
+                Button {
+                    withAnimation(.easeOut(duration: 0.2)) { permissionDismissed = true }
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundColor(Theme.textTertiary)
+                        .frame(width: 22, height: 22)
+                }
+                .buttonStyle(.plain)
             }
             Text("需要「使用 App 期间」+「始终」定位权限。位置只在本机计算，不会上传；判定规则是「同一城市隔 3 小时还在」才算去过。")
-                .font(.system(size: 11, weight: .regular, design: .rounded))
+                .font(Theme.Typo.caption())
                 .foregroundColor(Theme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
             Button {
@@ -193,17 +272,18 @@ struct HomeView: View {
             } label: {
                 Text(app.location.status == .denied ? "去系统设置开启" : "允许定位")
                     .font(.system(size: 12, weight: .semibold, design: .rounded))
-                    .foregroundColor(.white)
+                    .foregroundColor(.black)
                     .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .background(Theme.brand, in: Capsule())
+                    .padding(.vertical, 7)
+                    .background(Theme.pending, in: Capsule())
             }
             .buttonStyle(.plain)
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: Theme.Layout.cardRadius,
+                                                             style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: Theme.Layout.cardRadius, style: .continuous)
             .stroke(Color.white.opacity(0.08), lineWidth: 1))
     }
 
@@ -217,7 +297,7 @@ struct HomeView: View {
                     .padding(.vertical, 9)
                     .background(Theme.brandLight, in: Capsule())
                     .shadow(color: Theme.brand.opacity(0.5), radius: 12)
-                    .padding(.top, 104)
+                    .padding(.top, 92)
                     .transition(.move(edge: .top).combined(with: .opacity))
             }
             Spacer()
@@ -230,18 +310,35 @@ struct HomeView: View {
     private func dragGesture(size: CGSize) -> some Gesture {
         DragGesture(minimumDistance: 1)
             .onChanged { value in
+                if !dragging {
+                    dragging = true
+                    app.stopMomentum()
+                }
                 let delta = CGSize(width: value.translation.width - lastDrag.width,
                                    height: value.translation.height - lastDrag.height)
                 lastDrag = value.translation
                 app.pan(dx: delta.width, dy: delta.height, size: size)
             }
-            .onEnded { _ in lastDrag = .zero }
+            .onEnded { value in
+                lastDrag = .zero
+                dragging = false
+                // 用系统预测的终点估算松手速度（多的那段大约 0.3 秒走完）
+                let extra = CGSize(width: value.predictedEndTranslation.width - value.translation.width,
+                                   height: value.predictedEndTranslation.height - value.translation.height)
+                app.startMomentum(velocity: CGSize(width: extra.width / 0.3,
+                                                   height: extra.height / 0.3),
+                                  size: size)
+            }
     }
 
     private var pinchGesture: some Gesture {
         MagnificationGesture()
             .onChanged { scale in
-                if pinchBase == nil { pinchBase = app.zoom }
+                if pinchBase == nil {
+                    pinchBase = app.zoom
+                    app.stopMomentum()
+                    app.autoFollow = false
+                }
                 app.magnify(from: pinchBase ?? app.zoom, scale: scale)
             }
             .onEnded { _ in pinchBase = nil }

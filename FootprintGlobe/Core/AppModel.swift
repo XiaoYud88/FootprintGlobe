@@ -97,8 +97,23 @@ final class AppModel: ObservableObject {
         return .city
     }
 
+    /// 当前层级的中文名，给顶部/底部指示器用
+    var levelText: String {
+        if isGlobe { return "地球" }
+        switch detail {
+        case .country: return "国家"
+        case .province: return "省份"
+        case .city: return "城市"
+        }
+    }
+
     func setZoom(_ value: Double) {
         zoom = min(max(value, 0), Self.maxZoom)
+    }
+
+    func stepZoom(_ delta: Double) {
+        stopMomentum()
+        setZoom(zoom + delta)
     }
 
     func magnify(from base: Double, scale: CGFloat) {
@@ -128,14 +143,54 @@ final class AppModel: ObservableObject {
         }
     }
 
+    // MARK: - 惯性
+
+    private var momentumTask: Task<Void, Never>?
+
+    /// 松手后的滑行：以 60fps 继续平移，速度每帧乘 0.93，直到明显停下。
+    /// 松手那一刻的速度由 `DragGesture.predictedEndTranslation` 估算（单位：点/秒）。
+    func startMomentum(velocity: CGSize, size: CGSize) {
+        momentumTask?.cancel()
+        guard size.width > 0, size.height > 0 else { return }
+        var vx = min(max(Double(velocity.width), -4200), 4200)
+        var vy = min(max(Double(velocity.height), -4200), 4200)
+        guard hypot(vx, vy) > 60 else { return }
+
+        momentumTask = Task { [weak self] in
+            let dt = 1.0 / 60.0
+            var slowFrames = 0
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 16_666_667)
+                guard let self, !Task.isCancelled else { return }
+                self.pan(dx: CGFloat(vx * dt), dy: CGFloat(vy * dt), size: size)
+                vx *= 0.93
+                vy *= 0.93
+                if hypot(vx, vy) < 32 { slowFrames += 1 } else { slowFrames = 0 }
+                if slowFrames >= 2 {
+                    self.momentumTask = nil
+                    return
+                }
+            }
+        }
+    }
+
+    /// 手指再次按下 / 双指缩放 / 切换层级时立刻刹住
+    func stopMomentum() {
+        momentumTask?.cancel()
+        momentumTask = nil
+    }
+
     func enterChina() {
+        stopMomentum()
         if let focus {
             center = focus
         }
-        setZoom(max(zoom, 2.2))
+        // 视野跨度约 65°，正好把中国放进屏幕（zoom 1.62 → lonSpan ≈ 65°）
+        setZoom(max(zoom, 1.62))
     }
 
     func backToGlobe() {
+        stopMomentum()
         if let focus {
             center = focus
         }
@@ -160,6 +215,25 @@ final class AppModel: ObservableObject {
     @discardableResult
     func markVisited(_ region: Region) -> Visit {
         visits.markVisited(region, manual: true)
+    }
+
+    func record(for code: String) -> Visit? { visits.visit(code) }
+
+    /// 城市清单里「填表保存」的唯一入口：第一次去的时间 + 备注 + 状态。
+    @discardableResult
+    func saveRecord(_ region: Region, status: VisitStatus,
+                    firstVisit: Date, note: String) -> Visit {
+        let saved = visits.saveRecord(region, status: status, firstVisit: firstVisit, note: note)
+        switch status {
+        case .visited: showToast("已记录 · \(region.name)")
+        case .wishlist: showToast("已加入想去 · \(region.name)")
+        }
+        return saved
+    }
+
+    func removeRecord(_ region: Region) {
+        visits.remove(code: region.code)
+        showToast("已移除 · \(region.name)")
     }
 
     func confirmPending(_ code: String) {
@@ -194,6 +268,8 @@ final class AppModel: ObservableObject {
     var cityProgress: Double {
         boundary.cityCount > 0 ? Double(visits.cityCount) / Double(boundary.cityCount) : 0
     }
+
+    var storyCount: Int { visits.storyCount }
 
     var progressText: String { "\(visits.cityCount) / \(boundary.cityCount)" }
 

@@ -171,6 +171,46 @@ final class VisitStore: ObservableObject {
         save()
     }
 
+    /// 手动添加 / 编辑一条记录：可以指定「第一次去的时间」，也可以写备注。
+    /// 这是城市清单里点开表单后唯一的写入口——点了保存才算进「去过」。
+    @discardableResult
+    func saveRecord(_ region: Region, status: VisitStatus,
+                    firstVisit: Date, note: String) -> Visit {
+        let trimmed = note.trimmingCharacters(in: .whitespacesAndNewlines)
+        var visit = visits[region.code] ?? Visit(code: region.code,
+                                                cityName: region.name,
+                                                provinceCode: region.provinceCode,
+                                                status: status,
+                                                firstSeen: firstVisit,
+                                                lastSeen: firstVisit,
+                                                dayCount: 1,
+                                                sampleCount: 0,
+                                                isManual: true,
+                                                note: "")
+        visit.cityName = region.name
+        visit.provinceCode = region.provinceCode
+        visit.status = status
+        visit.firstSeen = firstVisit
+        visit.lastSeen = max(visit.lastSeen, firstVisit)
+        visit.note = trimmed
+        visit.isManual = true
+        visits[region.code] = visit
+        if status == .visited {
+            pendings.removeValue(forKey: region.code)
+        }
+        save()
+        return visit
+    }
+
+    /// 有备注（故事）的城市数量
+    var storyCount: Int { visits.values.filter { $0.hasNote }.count }
+
+    /// 按「第一次到访时间」倒序，给以后的时间线用
+    var timelineVisits: [Visit] {
+        visits.values.filter { $0.status == .visited }
+            .sorted { $0.firstSeen > $1.firstSeen }
+    }
+
     func resetAll() {
         visits = [:]
         pendings = [:]

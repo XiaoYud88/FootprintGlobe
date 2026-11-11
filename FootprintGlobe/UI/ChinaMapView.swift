@@ -23,31 +23,16 @@ struct ChinaMapView: View {
 
     // MARK: - 投影
 
-    private func transform(for size: CGSize) -> CGAffineTransform {
-        let k = Double(size.width) / max(lonSpan, 0.05)
-        let ky = k / max(0.25, cos(center.lat * .pi / 180))
-        return CGAffineTransform(a: CGFloat(k), b: 0, c: 0, d: CGFloat(-ky),
-                                 tx: CGFloat(Double(size.width) / 2 - center.lon * k),
-                                 ty: CGFloat(Double(size.height) / 2 + center.lat * ky))
-    }
-
-    private func visibleBox(for size: CGSize) -> BBox {
-        let k = Double(size.width) / max(lonSpan, 0.05)
-        let ky = k / max(0.25, cos(center.lat * .pi / 180))
-        let latSpan = Double(size.height) / ky
-        return BBox(minLon: center.lon - lonSpan / 2, minLat: center.lat - latSpan / 2,
-                    maxLon: center.lon + lonSpan / 2, maxLat: center.lat + latSpan / 2)
-    }
-
-    private func screenPoint(_ coord: GeoCoord, _ t: CGAffineTransform) -> CGPoint {
-        CGPoint(x: coord.lon, y: -coord.lat).applying(t)
+    private func projection(for size: CGSize) -> ChinaProjection {
+        ChinaProjection(size: size, center: center, lonSpan: lonSpan)
     }
 
     // MARK: - 绘制
 
     private func draw(in context: GraphicsContext, size: CGSize) {
-        let t = transform(for: size)
-        let visible = visibleBox(for: size)
+        let p = projection(for: size)
+        let t = p.affine
+        let visible = p.visibleBox
         let activeProvinces = provinces.filter { $0.bounds.intersects(visible) }
         let activeCities = cities.filter { $0.bounds.intersects(visible) }
 
@@ -115,13 +100,14 @@ struct ChinaMapView: View {
                        lineWidth: detail == .country ? 0.6 : 0.8)
 
         // 5. 文字
-        drawLabels(in: context, t: t, size: size, provinces: activeProvinces, cities: activeCities)
+        drawLabels(in: context, projection: p, size: size,
+                   provinces: activeProvinces, cities: activeCities)
 
         // 6. 我的位置
-        drawFocus(in: context, t: t)
+        drawFocus(in: context, projection: p)
     }
 
-    private func drawLabels(in context: GraphicsContext, t: CGAffineTransform, size: CGSize,
+    private func drawLabels(in context: GraphicsContext, projection: ChinaProjection, size: CGSize,
                             provinces: [Region], cities: [Region]) {
         var occupied: [CGRect] = []
 
@@ -152,7 +138,7 @@ struct ChinaMapView: View {
                     .replacingOccurrences(of: "回族", with: "")
                     .replacingOccurrences(of: "特别行政区", with: "")
                 let tappable = visitedProvinceCodes.contains(province.code)
-                place(short, at: screenPoint(province.center, t), fontSize: 10.5,
+                place(short, at: projection.screenPoint(province.center), fontSize: 10.5,
                       color: tappable ? Theme.brandLight : Theme.textSecondary,
                       weight: tappable ? .semibold : .medium)
             }
@@ -161,34 +147,34 @@ struct ChinaMapView: View {
         // 市名：去过 / 想去的优先
         if detail != .city {
             for city in cities where visitedCityCodes.contains(city.code) {
-                place(city.shortName, at: screenPoint(city.center, t), fontSize: 9,
+                place(city.shortName, at: projection.screenPoint(city.center), fontSize: 9,
                       color: Theme.brandLight, weight: .semibold)
             }
         } else {
             for city in cities where visitedCityCodes.contains(city.code) {
-                place(city.shortName, at: screenPoint(city.center, t), fontSize: 10,
+                place(city.shortName, at: projection.screenPoint(city.center), fontSize: 10,
                       color: Theme.brandLight, weight: .semibold)
             }
             for city in cities where wishlistCityCodes.contains(city.code) {
-                place(city.shortName, at: screenPoint(city.center, t), fontSize: 9,
+                place(city.shortName, at: projection.screenPoint(city.center), fontSize: 9,
                       color: Theme.wish, weight: .medium)
             }
             for city in cities where pendingCityCodes.contains(city.code) {
-                place(city.shortName, at: screenPoint(city.center, t), fontSize: 9,
+                place(city.shortName, at: projection.screenPoint(city.center), fontSize: 9,
                       color: Theme.pending, weight: .semibold)
             }
             for city in cities {
                 if visitedCityCodes.contains(city.code) || wishlistCityCodes.contains(city.code)
                     || pendingCityCodes.contains(city.code) { continue }
-                place(city.shortName, at: screenPoint(city.center, t), fontSize: 8.5,
+                place(city.shortName, at: projection.screenPoint(city.center), fontSize: 8.5,
                       color: Theme.textTertiary, weight: .regular)
             }
         }
     }
 
-    private func drawFocus(in context: GraphicsContext, t: CGAffineTransform) {
+    private func drawFocus(in context: GraphicsContext, projection: ChinaProjection) {
         guard let focus else { return }
-        let point = screenPoint(focus, t)
+        let point = projection.screenPoint(focus)
         guard point.x.isFinite, point.y.isFinite else { return }
         let halo = Path(ellipseIn: CGRect(x: point.x - 9, y: point.y - 9, width: 18, height: 18))
         context.stroke(halo, with: .color(.white.opacity(0.35)), lineWidth: 1)
