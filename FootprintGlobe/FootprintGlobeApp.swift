@@ -1,5 +1,6 @@
 import SwiftUI
 
+@main
 struct FootprintGlobeApp: App {
     @StateObject private var app = AppModel()
 
