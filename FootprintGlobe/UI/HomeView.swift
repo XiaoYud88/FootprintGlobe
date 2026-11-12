@@ -14,6 +14,7 @@ struct HomeView: View {
     @State private var showPending = false
     @State private var showSettings = false
     @State private var showPassport = false
+    @State private var showTrips = false
     @State private var editingCity: Region?
     @State private var permissionDismissed = false
 
@@ -34,7 +35,11 @@ struct HomeView: View {
                                   focus: app.focus,
                                   countries: WorldStore.shared.loadIfNeeded(),
                                   parallax: app.parallax,
-                                  appearance: app.appearance)
+                                  appearance: app.appearance,
+                                  home: app.homeCoord,
+                                  homeArcs: app.homeArcs,
+                                  legs: app.globeLegs,
+                                  animated: true)
                             .transition(.opacity)
                     } else {
                         ChinaMapView(center: app.center,
@@ -81,6 +86,7 @@ struct HomeView: View {
         .sheet(isPresented: $showPending) { PendingListView() }
         .sheet(isPresented: $showSettings) { SettingsView() }
         .sheet(isPresented: $showPassport) { PassportView().environmentObject(app) }
+        .sheet(isPresented: $showTrips) { TripsView() }
         .sheet(item: $editingCity) { city in
             CityRecordSheet(region: city)
                 .environmentObject(app)
@@ -168,6 +174,9 @@ struct HomeView: View {
 
     private var bottomStack: some View {
         VStack(spacing: Theme.Layout.floatGap) {
+            if let home = app.homeRegion {
+                homeChip(home)
+            }
             if let city = app.currentCity {
                 currentCityChip(city)
             }
@@ -176,6 +185,40 @@ struct HomeView: View {
             }
             dock
         }
+    }
+
+    /// 设了家之后底部多出来的一枚金色小胶囊，点一下飞回家
+    private func homeChip(_ home: Region) -> some View {
+        Button {
+            app.fly(to: home)
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "house.fill")
+                    .font(.system(size: 9, weight: .bold))
+                Text("家 · \(home.shortName)")
+                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+                if let km = homeDistanceText(home) {
+                    Text(km)
+                        .font(.system(size: 10, weight: .medium, design: .rounded))
+                        .foregroundColor(Theme.gold.opacity(0.72))
+                }
+            }
+            .foregroundColor(Theme.gold)
+            .padding(.horizontal, 11)
+            .frame(height: 26)
+            .background(Theme.gold.opacity(0.14), in: Capsule())
+            .overlay(Capsule().stroke(Theme.gold.opacity(0.34), lineWidth: 0.8))
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// 离现在位置多远（没定位到就不显示）
+    private func homeDistanceText(_ home: Region) -> String? {
+        guard let focus = app.focus else { return nil }
+        let km = GreatCircle.distanceKm(focus, home.center)
+        if km < 1 { return "就在这儿" }
+        return km < 1000 ? "\(Int(km.rounded())) km"
+                         : String(format: "%.0f km", km)
     }
 
     private var showPermissionCard: Bool {
@@ -234,6 +277,7 @@ struct HomeView: View {
                 showPending = true
             }
             dockButton("list.bullet") { showCities = true }
+            dockButton("house.fill") { showTrips = true }
             dockButton("gearshape.fill") { showSettings = true }
         }
         .padding(Theme.Layout.dockPadding)
@@ -390,7 +434,8 @@ struct HomeView: View {
     private func dragGesture(size: CGSize) -> some Gesture {
         DragGesture(minimumDistance: 1)
             .onChanged { value in
-                if !dragging {
+                let started = !dragging
+                if started {
                     dragging = true
                     app.stopMomentum()
                 }
@@ -398,10 +443,21 @@ struct HomeView: View {
                                    height: value.translation.height - lastDrag.height)
                 lastDrag = value.translation
                 app.pan(dx: delta.width, dy: delta.height, size: size)
+
+                // 转球音：地球被「摩擦」着转，滚得越快声音越明显
+                if app.isGlobe {
+                    let intensity = min(1, Double(hypot(delta.width, delta.height)) / 9)
+                    if started {
+                        RollSound.shared.begin(intensity: intensity)
+                    } else {
+                        RollSound.shared.update(intensity: intensity)
+                    }
+                }
             }
             .onEnded { value in
                 lastDrag = .zero
                 dragging = false
+                RollSound.shared.end()
                 // 用系统预测的终点估算松手速度（多的那段大约 0.3 秒走完）
                 let extra = CGSize(width: value.predictedEndTranslation.width - value.translation.width,
                                    height: value.predictedEndTranslation.height - value.translation.height)

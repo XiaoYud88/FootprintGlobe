@@ -75,7 +75,7 @@ struct PassportView: View {
         data.center = posterCenter()
         data.unlockedBadges = unlockedCount
         data.totalBadges = BadgeCatalog.total
-        data.version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.5.0"
+        data.version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.6.0"
 
         posterData = data
         showPoster = true

@@ -12,6 +12,7 @@ struct SettingsView: View {
     @State private var showResetConfirm = false
     @State private var notifyOn = false
     @State private var showAccount = false
+    @State private var showTrips = false
 
     // 备份 / 恢复
     @State private var busy = false
@@ -81,13 +82,45 @@ struct SettingsView: View {
                 } header: {
                     Text("外观")
                 } footer: {
-                    Text("四套配色各自带自己的星空和地球，手动切换、立即生效，下次打开还是这个。")
+                    Text("五套配色各自带自己的星空和地球，手动切换、立即生效，下次打开还是这个。")
+                        .font(.system(size: 11, design: .rounded))
+                }
+
+                // MARK: 家与行程
+                Section {
+                    Button {
+                        showTrips = true
+                    } label: {
+                        HStack(spacing: 12) {
+                            Image(systemName: "house.fill")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundColor(Theme.gold)
+                                .frame(width: 22)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("家与行程")
+                                    .font(.system(size: 15, weight: .semibold, design: .rounded))
+                                    .foregroundColor(Theme.textPrimary)
+                                Text(tripSummary)
+                                    .font(.system(size: 11, design: .rounded))
+                                    .foregroundColor(Theme.textSecondary)
+                            }
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundColor(Theme.textTertiary)
+                        }
+                    }
+                } header: {
+                    Text("家与行程")
+                } footer: {
+                    Text("选一座城市作为家，地球上会为它亮起一盏灯；再手动加上从哪儿到哪儿坐什么，飞机火车就会在地球上循环飞。")
                         .font(.system(size: 11, design: .rounded))
                 }
 
                 // MARK: 地球
                 Section {
                     Toggle("自动旋转", isOn: $app.autoRotate)
+                    Toggle("转球音", isOn: rollSoundBinding)
                     HStack {
                         Text("陀螺仪视差")
                         Spacer()
@@ -97,7 +130,7 @@ struct SettingsView: View {
                 } header: {
                     Text("地球")
                 } footer: {
-                    Text("停手 8 秒后地球会慢慢自转（约 90 秒一圈），手指一碰就停；轻微倾斜手机，球面会跟着偏一点，星空不动，看着更有纵深。")
+                    Text("停手 8 秒后地球会慢慢自转（约 90 秒一圈），手指一碰就停；轻微倾斜手机，球面会跟着偏一点，星空不动，看着更有纵深。转球音是手指拖动时的一点点低频摩擦声，转得越快声音越大，静音键照常有效。")
                         .font(.system(size: 11, design: .rounded))
                 }
 
@@ -255,7 +288,7 @@ struct SettingsView: View {
                     HStack {
                         Text("版本")
                         Spacer()
-                        Text("0.5.0 (M1-V3)")
+                        Text("0.6.0 (M2-V1)")
                             .foregroundColor(Theme.textTertiary)
                     }
                 } header: {
@@ -279,6 +312,9 @@ struct SettingsView: View {
             }
             .sheet(isPresented: $showAccount) {
                 AccountSheet()
+            }
+            .sheet(isPresented: $showTrips) {
+                TripsView()
             }
             .onChange(of: dwellHours) { _, newValue in
                 app.tracker.config.dwellHours = newValue
@@ -329,6 +365,25 @@ struct SettingsView: View {
         }
     }
 
+    /// 「家与行程」那一行的副标题
+    private var tripSummary: String {
+        let home = app.homeRegion?.name
+        let legs = app.trips.legs.count
+        var parts: [String] = []
+        if let home { parts.append("家 · \(home)") }
+        if legs > 0 {
+            parts.append("\(legs) 条出行 · \(app.trips.showcasedCount) 条在地球上")
+        }
+        if parts.isEmpty { return "还没有设家，也没有加过出行" }
+        return parts.joined(separator: "　")
+    }
+
+    /// 转球音开关：RollSound 是单例、不走 ObservableObject，这里手动桥一下
+    private var rollSoundBinding: Binding<Bool> {
+        Binding(get: { RollSound.shared.enabled },
+                set: { RollSound.shared.enabled = $0 })
+    }
+
     private func applyNotify(_ on: Bool) async {
         if on {
             let granted = await app.notifications.requestAuthorization()
@@ -362,7 +417,7 @@ struct SettingsView: View {
         busy = true
         defer { busy = false }
         do {
-            let url = try BackupService.shared.makeBackup(store: app.visits)
+            let url = try BackupService.shared.makeBackup(store: app.visits, trips: app.trips)
             backupURL = url
             backupSummary = try? BackupService.shared.inspect(url)
             refreshBackups()
@@ -391,7 +446,8 @@ struct SettingsView: View {
             restoreTarget = nil
         }
         do {
-            let summary = try BackupService.shared.restore(from: url, store: app.visits)
+            let summary = try BackupService.shared.restore(from: url, store: app.visits,
+                                                          trips: app.trips)
             refreshBackups()
             app.showToast("已恢复 \(summary.cityCount) 个城市")
         } catch {

@@ -5,6 +5,7 @@ import OSLog
 ///
 /// 备份包就是一个普通 zip，里面有：
 /// - `footprint.json`  全部记录（城市、待确认候选、备注、标签、星级）
+/// - `travel.json`     家和出行方式（M2-V1 起，没有就不写这一条）
 /// - `photos/<文件名>`  每个城市最多 3 张照片
 /// - `manifest.json`    版本号 / 导出时间 / 条数，只给人看，恢复时可有可无
 ///
@@ -70,7 +71,7 @@ final class BackupService {
 
     /// 打一个备份包，返回文件地址。同时会顺手清掉太旧的几份。
     @discardableResult
-    func makeBackup(store: VisitStore) throws -> URL {
+    func makeBackup(store: VisitStore, trips: TripStore? = nil) throws -> URL {
         guard store.visits.values.contains(where: { $0.status == .visited }) else {
             throw BackupError.emptyBackup
         }
@@ -78,6 +79,11 @@ final class BackupService {
         var entries: [ZipArchive.Entry] = []
         let json = try store.exportData()
         entries.append(.init(name: "footprint.json", data: json))
+
+        // 家和出行单独存一份，恢复时一起带回来
+        if let travel = trips?.exportData() {
+            entries.append(.init(name: "travel.json", data: travel))
+        }
 
         let referenced = Set(store.visits.values.flatMap { $0.photos })
         var packedPhotos = 0
@@ -145,7 +151,7 @@ final class BackupService {
 
     /// 用备份包整体覆盖本地数据（记录 + 照片）。调用前请务必让用户确认过。
     @discardableResult
-    func restore(from url: URL, store: VisitStore) throws -> Summary {
+    func restore(from url: URL, store: VisitStore, trips: TripStore? = nil) throws -> Summary {
         let entries = try readEntries(at: url)
         guard let jsonEntry = dataEntry(named: "footprint.json", in: entries) else {
             throw BackupError.missingData
@@ -153,6 +159,11 @@ final class BackupService {
 
         // 先把 JSON 读通，确认是可用的包，再动手改本地数据
         let counts = try store.importData(jsonEntry.data)
+
+        // 老备份包里没有 travel.json，那就保持现在的家与行程不动
+        if let travel = dataEntry(named: "travel.json", in: entries) {
+            trips?.importData(travel.data)
+        }
 
         let photos = entries.filter { $0.name.hasPrefix("photos/") && !$0.name.hasSuffix("/") }
         PhotoStore.shared.clearAll()

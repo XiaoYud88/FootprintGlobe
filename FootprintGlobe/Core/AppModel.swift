@@ -82,6 +82,8 @@ final class AppModel: ObservableObject {
     let tracker: VisitTracker
     let location = LocationService()
     let notifications = NotificationService.shared
+    /// 家 + 出行方式（存在 travel.json，和足迹数据分开）
+    let trips = TripStore()
 
     private var cancellables = Set<AnyCancellable>()
     private var started = false
@@ -98,6 +100,12 @@ final class AppModel: ObservableObject {
 
         // 把 VisitStore 的变化转发出去，视图只订阅 AppModel 就够了
         store.objectWillChange
+            .sink { [weak self] _ in
+                self?.objectWillChange.send()
+            }
+            .store(in: &cancellables)
+
+        trips.objectWillChange
             .sink { [weak self] _ in
                 self?.objectWillChange.send()
             }
@@ -456,6 +464,69 @@ final class AppModel: ObservableObject {
             try? await Task.sleep(nanoseconds: 2_600_000_000)
             if self?.toast == text { self?.toast = nil }
         }
+    }
+
+    // MARK: - 家与行程
+
+    /// 家所在的城市
+    var homeRegion: Region? {
+        guard let code = trips.homeCode else { return nil }
+        return boundary.city(code: code)
+    }
+
+    var homeCoord: GeoCoord? { homeRegion?.center }
+
+    /// 归家线：只连最近的 8 座去过的城市。全连上就是几百条线，糊成一片什么都看不见
+    var homeArcs: [[GeoCoord]] {
+        guard let home = homeCoord else { return [] }
+        let nearest = visitedCities
+            .filter { $0.code != trips.homeCode }
+            .map { ($0, GreatCircle.distanceKm(home, $0.center)) }
+            .sorted { $0.1 < $1.1 }
+            .prefix(8)
+        return nearest.map { GreatCircle.samples(from: home, to: $0.0.center, count: 28) }
+    }
+
+    /// 地球上循环飞的那几条（最多 10 条，由 TripStore 保证）
+    var globeLegs: [GlobeLeg] {
+        let legs = trips.showcasedLegs
+        guard !legs.isEmpty else { return [] }
+        let total = Double(legs.count)
+        return legs.enumerated().compactMap { index, leg in
+            guard let from = boundary.city(code: leg.fromCode)?.center,
+                  let to = boundary.city(code: leg.toCode)?.center else { return nil }
+            return GlobeLeg(id: leg.id, from: from, to: to, mode: leg.mode,
+                            phase: Double(index) / total)
+        }
+    }
+
+    func setHome(_ region: Region?) {
+        trips.setHome(region?.code)
+        if let region {
+            showToast("家 · \(region.name)")
+        } else {
+            showToast("已经取消「家」")
+        }
+    }
+
+    func isHome(_ code: String) -> Bool { trips.isHome(code) }
+
+    @discardableResult
+    func addLeg(from: Region, to: Region, mode: TransportMode, note: String = "") -> Bool {
+        let leg = TripLeg(fromCode: from.code, toCode: to.code, mode: mode, note: note)
+        let ok = trips.add(leg)
+        showToast(ok ? "已添加 · \(from.name) → \(to.name)" : "这条线路已经有了")
+        return ok
+    }
+
+    func removeLeg(_ id: UUID) { trips.remove(id) }
+
+    func toggleLegShowcase(_ id: UUID) {
+        if trips.showcasedCount >= TripStore.maxShowcase,
+           let leg = trips.legs.first(where: { $0.id == id }), !leg.showcased {
+            showToast("地球上最多同时显示 \(TripStore.maxShowcase) 条")
+        }
+        trips.toggleShowcase(id)
     }
 
     // MARK: - 统计

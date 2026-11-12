@@ -36,6 +36,82 @@ struct SkyView: View {
             drawNight(in: context, size: size, rect: rect, time: time, neon: false)
         case .neon:
             drawNight(in: context, size: size, rect: rect, time: time, neon: true)
+        case .ink:
+            drawInk(in: context, rect: rect)
+        }
+    }
+
+    // MARK: - 水墨：宣纸 + 远山 + 朱印
+
+    private func drawInk(in context: GraphicsContext, rect: CGRect) {
+        // 宣纸：中间亮、四角略暗，像纸被灯光从上方照着
+        context.fill(Path(rect), with: .linearGradient(
+            Gradient(stops: [
+                .init(color: Color(red: 0.980, green: 0.976, blue: 0.965), location: 0.0),
+                .init(color: Color(red: 0.957, green: 0.953, blue: 0.941), location: 0.55),
+                .init(color: Color(red: 0.910, green: 0.906, blue: 0.894), location: 1.0)
+            ]),
+            startPoint: CGPoint(x: 0, y: 0),
+            endPoint: CGPoint(x: rect.width * 0.6, y: rect.height)))
+
+        // 三层远山：越远越淡、越糊，像毛笔蘸水扫出来的
+        drawInkRidge(in: context, rect: rect, baseY: 0.90, height: 0.16,
+                     alpha: 0.16, blur: 9, seed: 0x1A31_5C07)
+        drawInkRidge(in: context, rect: rect, baseY: 0.96, height: 0.13,
+                     alpha: 0.22, blur: 6, seed: 0x2A3F)
+        drawInkRidge(in: context, rect: rect, baseY: 1.04, height: 0.11,
+                     alpha: 0.30, blur: 3, seed: 0x51C7)
+
+        // 一轮淡墨日：几乎只是个影子
+        context.drawLayer { layer in
+            layer.addFilter(.blur(radius: rect.width * 0.012))
+            layer.fill(
+                Path(ellipseIn: CGRect(x: rect.width * 0.66, y: rect.height * 0.10,
+                                       width: rect.width * 0.20, height: rect.width * 0.20)),
+                with: .radialGradient(
+                    Gradient(colors: [Color(red: 0.42, green: 0.42, blue: 0.44).opacity(0.16),
+                                      Color(red: 0.42, green: 0.42, blue: 0.44).opacity(0.05)]),
+                    center: CGPoint(x: rect.width * 0.76, y: rect.height * 0.10 + rect.width * 0.10),
+                    startRadius: 0, endRadius: rect.width * 0.13))
+        }
+
+        // 右下角一方朱印，只有这一点颜色
+        let seal = CGRect(x: rect.width - 46, y: rect.height - 52, width: 26, height: 26)
+        context.fill(Path(roundedRect: seal, cornerRadius: 3),
+                     with: .color(Color(red: 0.70, green: 0.20, blue: 0.16).opacity(0.82)))
+        var mark = Path()
+        mark.move(to: CGPoint(x: seal.minX + 7, y: seal.midY))
+        mark.addLine(to: CGPoint(x: seal.maxX - 7, y: seal.midY))
+        mark.move(to: CGPoint(x: seal.midX, y: seal.minY + 6))
+        mark.addLine(to: CGPoint(x: seal.midX, y: seal.maxY - 6))
+        context.stroke(mark, with: .color(Color(red: 0.99, green: 0.96, blue: 0.94).opacity(0.85)),
+                       lineWidth: 1.6)
+    }
+
+    /// 一条起伏的山脊线，填到画面底部
+    private func drawInkRidge(in context: GraphicsContext, rect: CGRect, baseY: Double,
+                              height: Double, alpha: Double, blur: Double, seed base: UInt64) {
+        var seed = base
+        var path = Path()
+        let startY = rect.height * baseY
+        path.move(to: CGPoint(x: 0, y: startY))
+        let steps = 26
+        var frequencies: [Double] = []
+        for _ in 0..<steps { frequencies.append(nextRandom(&seed)) }
+        let amplitude = rect.height * height
+        for index in 0...steps {
+            let x = rect.width * Double(index) / Double(steps)
+            let wave = sin(Double(index) * 0.9 + frequencies[index] * 2.4) * 0.55
+                + sin(Double(index) * 0.37 + frequencies[index] * 5.1) * 0.45
+            path.addLine(to: CGPoint(x: x, y: startY - amplitude * wave))
+        }
+        path.addLine(to: CGPoint(x: rect.width, y: rect.height))
+        path.addLine(to: CGPoint(x: 0, y: rect.height))
+        path.closeSubpath()
+
+        context.drawLayer { layer in
+            layer.addFilter(.blur(radius: blur))
+            layer.fill(path, with: .color(Color(red: 0.16, green: 0.16, blue: 0.17).opacity(alpha)))
         }
     }
 

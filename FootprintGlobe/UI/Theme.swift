@@ -1,11 +1,12 @@
 import SwiftUI
 
-/// 外观模式：现在有四套（深空 / 日光 / 纸质地图 / 霓虹夜航），由用户在设置里手动切换。
+/// 外观模式：现在有五套（深空 / 日光 / 纸质地图 / 霓虹夜航 / 水墨），由用户在设置里手动切换。
 enum AppearanceMode: String, Codable, CaseIterable, Identifiable {
     case dark
     case light
     case paper
     case neon
+    case ink
 
     var id: String { rawValue }
 
@@ -15,16 +16,18 @@ enum AppearanceMode: String, Codable, CaseIterable, Identifiable {
         case .light: return "日光"
         case .paper: return "纸质地图"
         case .neon: return "霓虹夜航"
+        case .ink: return "水墨"
         }
     }
 
-    /// 分段控件里用短名，四个放得下
+    /// 分段控件里用短名，五个放得下
     var shortTitle: String {
         switch self {
         case .dark: return "深空"
         case .light: return "日光"
         case .paper: return "纸图"
         case .neon: return "霓虹"
+        case .ink: return "水墨"
         }
     }
 
@@ -34,6 +37,7 @@ enum AppearanceMode: String, Codable, CaseIterable, Identifiable {
         case .light: return "sun.max.fill"
         case .paper: return "map.fill"
         case .neon: return "sparkles"
+        case .ink: return "paintbrush.pointed.fill"
         }
     }
 
@@ -44,20 +48,21 @@ enum AppearanceMode: String, Codable, CaseIterable, Identifiable {
         case .light: return "米白纸面 + 深色文字，白天看着最舒服"
         case .paper: return "仿旧地图的牛皮纸色，像一本旅行手帐"
         case .neon: return "紫黑底 + 青色霓虹，晚上看最带感"
+        case .ink: return "宣纸底 + 墨色远山 + 朱砂印记，像一幅没画完的山水"
         }
     }
 
     var colorScheme: ColorScheme {
         switch self {
         case .dark, .neon: return .dark
-        case .light, .paper: return .light
+        case .light, .paper, .ink: return .light
         }
     }
 
     /// 「底色是浅的」——决定明暗描边、暗角强度这些二选一的取值
     var isLight: Bool {
         switch self {
-        case .light, .paper: return true
+        case .light, .paper, .ink: return true
         case .dark, .neon: return false
         }
     }
@@ -214,12 +219,41 @@ enum Theme {
         atmosphere: Color(red: 0.184, green: 0.937, blue: 0.847)
     )
 
+    /// 水墨：宣纸 + 淡墨 + 朱砂。比「纸质地图」更素，红只剩一点点，像画上的落款印章
+    static let inkPalette = Palette(
+        brand: Color(red: 0.596, green: 0.196, blue: 0.169),
+        brandLight: Color(red: 0.741, green: 0.263, blue: 0.216),
+        brandDim: Color(red: 0.596, green: 0.196, blue: 0.169).opacity(0.14),
+        wish: Color(red: 0.267, green: 0.322, blue: 0.310),
+        pending: Color(red: 0.639, green: 0.522, blue: 0.235),
+        gold: Color(red: 0.588, green: 0.451, blue: 0.176),
+
+        ocean: Color(red: 0.961, green: 0.957, blue: 0.945),
+        oceanDeep: Color(red: 0.925, green: 0.922, blue: 0.908),
+        land: Color(red: 0.851, green: 0.847, blue: 0.835),
+        landDim: Color(red: 0.898, green: 0.894, blue: 0.882),
+        border: Color(red: 0.302, green: 0.302, blue: 0.302),
+        graticule: Color(red: 0.694, green: 0.686, blue: 0.671),
+
+        textPrimary: Color(red: 0.118, green: 0.118, blue: 0.129),
+        textSecondary: Color(red: 0.118, green: 0.118, blue: 0.129).opacity(0.64),
+        textTertiary: Color(red: 0.118, green: 0.118, blue: 0.129).opacity(0.40),
+
+        card: Color(red: 0.988, green: 0.984, blue: 0.973),
+        cardElevated: Color(red: 1.0, green: 0.996, blue: 0.988),
+
+        globeTop: Color(red: 0.898, green: 0.894, blue: 0.882),
+        globeBottom: Color(red: 0.824, green: 0.820, blue: 0.808),
+        atmosphere: Color(red: 0.549, green: 0.580, blue: 0.596)
+    )
+
     static var current: Palette {
         switch mode {
         case .dark: return darkPalette
         case .light: return lightPalette
         case .paper: return paperPalette
         case .neon: return neonPalette
+        case .ink: return inkPalette
         }
     }
 
