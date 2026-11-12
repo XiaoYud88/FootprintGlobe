@@ -5,11 +5,13 @@ import UniformTypeIdentifiers
 struct SettingsView: View {
     @EnvironmentObject private var app: AppModel
     @Environment(\.dismiss) private var dismiss
+    @ObservedObject private var account = AccountService.shared
 
     @State private var dwellHours: Double = 3
     @State private var minSamples: Int = 2
     @State private var showResetConfirm = false
     @State private var notifyOn = false
+    @State private var showAccount = false
 
     // 备份 / 恢复
     @State private var busy = false
@@ -27,18 +29,75 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             List {
+                // MARK: 账号
+                Section {
+                    Button {
+                        showAccount = true
+                    } label: {
+                        HStack(spacing: 12) {
+                            AvatarView(name: account.displayName,
+                                       image: account.signedIn ? account.avatar : nil,
+                                       size: 40)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(account.signedIn ? account.displayName : "注册 / 登录")
+                                    .font(.system(size: 15, weight: .semibold, design: .rounded))
+                                    .foregroundColor(Theme.textPrimary)
+                                Text(account.signedIn
+                                     ? (account.account?.maskedPhone ?? "")
+                                     : "可选，不注册也能正常用")
+                                    .font(.system(size: 11, design: .rounded))
+                                    .foregroundColor(Theme.textSecondary)
+                            }
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundColor(Theme.textTertiary)
+                        }
+                    }
+                } header: {
+                    Text("账号")
+                } footer: {
+                    Text("手机号 + 密码直接注册，之后可以设头像和昵称。账号只留在这台手机上，不上传、不需要联网。")
+                        .font(.system(size: 11, design: .rounded))
+                }
+
                 // MARK: 外观
                 Section {
                     Picker("主题", selection: $app.appearance) {
                         ForEach(AppearanceMode.allCases) { mode in
-                            Label(mode.title, systemImage: mode.symbol).tag(mode)
+                            Text(mode.shortTitle).tag(mode)
                         }
                     }
                     .pickerStyle(.segmented)
+
+                    HStack(spacing: 8) {
+                        Image(systemName: app.appearance.symbol)
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundColor(Theme.brand)
+                        Text(app.appearance.hint)
+                            .font(.system(size: 11.5, design: .rounded))
+                            .foregroundColor(Theme.textSecondary)
+                    }
                 } header: {
                     Text("外观")
                 } footer: {
-                    Text("手动切换，不跟随系统。选好之后立即生效，下次打开还是这个主题。")
+                    Text("四套配色各自带自己的星空和地球，手动切换、立即生效，下次打开还是这个。")
+                        .font(.system(size: 11, design: .rounded))
+                }
+
+                // MARK: 地球
+                Section {
+                    Toggle("自动旋转", isOn: $app.autoRotate)
+                    HStack {
+                        Text("陀螺仪视差")
+                        Spacer()
+                        Text(app.motion.enabled ? "已开启" : "不可用")
+                            .foregroundColor(Theme.textSecondary)
+                    }
+                } header: {
+                    Text("地球")
+                } footer: {
+                    Text("停手 8 秒后地球会慢慢自转（约 90 秒一圈），手指一碰就停；轻微倾斜手机，球面会跟着偏一点，星空不动，看着更有纵深。")
                         .font(.system(size: 11, design: .rounded))
                 }
 
@@ -190,13 +249,13 @@ struct SettingsView: View {
 
                 // MARK: 关于
                 Section {
-                    Text("边界数据：中国来自 DataV GeoAtlas（GCJ-02），日本都道府县来自公开 GeoJSON，世界陆地与南极来自 Natural Earth，全部简化后打包在 App 内，约 3 MB，全程离线、不需要联网、不需要账号。定位坐标只在本机计算，不会上传。")
+                    Text("边界数据：中国来自 DataV GeoAtlas（GCJ-02），日本都道府县来自公开 GeoJSON，世界陆地与南极来自 Natural Earth，全部简化后打包在 App 内，约 3 MB，全程离线。定位坐标只在本机计算，不会上传。账号是可选项，手机号和密码也只留在这台手机（密码在钥匙串里，存的是加盐哈希）。")
                         .font(.system(size: 11, design: .rounded))
                         .foregroundColor(Theme.textSecondary)
                     HStack {
                         Text("版本")
                         Spacer()
-                        Text("0.4.0 (M1-V2)")
+                        Text("0.5.0 (M1-V3)")
                             .foregroundColor(Theme.textTertiary)
                     }
                 } header: {
@@ -217,6 +276,9 @@ struct SettingsView: View {
                 notifyOn = app.notifications.enabled
                 refreshBackups()
                 Task { await app.notifications.refreshAuthorization() }
+            }
+            .sheet(isPresented: $showAccount) {
+                AccountSheet()
             }
             .onChange(of: dwellHours) { _, newValue in
                 app.tracker.config.dwellHours = newValue

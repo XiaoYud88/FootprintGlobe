@@ -10,7 +10,7 @@ struct PassportView: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var onlyUnlocked = false
-    @State private var posterImage: UIImage?
+    @State private var posterData: PosterData?
     @State private var showPoster = false
 
     private var stats: TravelStats { app.stats }
@@ -57,13 +57,14 @@ struct PassportView: View {
         }
         .preferredColorScheme(Theme.colorScheme)
         .sheet(isPresented: $showPoster) {
-            if let posterImage {
-                PosterSheet(image: posterImage)
+            if let data = posterData {
+                PosterSheet(data: data)
             }
         }
     }
 
-    /// 把当前这份统计渲染成海报。地球的视角取「去过的地方的重心」，比当前镜头位置更像一张作品。
+    /// 把当前这份统计整理成海报数据。地球的视角取「去过的地方的重心」，比当前镜头位置更像一张作品。
+    /// 渲染交给 `PosterSheet` 自己在 sheet 里做，避免点按钮先卡一下再弹窗。
     private func makePoster() {
         var data = PosterData(stats: stats)
         data.provinces = app.boundary.provinces
@@ -72,13 +73,11 @@ struct PassportView: View {
         data.pendingCities = app.visits.pendingList.compactMap { app.boundary.city(code: $0.code) }
         data.countries = WorldStore.shared.loadIfNeeded()
         data.center = posterCenter()
-        data.sun = app.sun
         data.unlockedBadges = unlockedCount
         data.totalBadges = BadgeCatalog.total
-        data.version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.4.0"
+        data.version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.5.0"
 
-        guard let image = PosterRenderer.render(data) else { return }
-        posterImage = image
+        posterData = data
         showPoster = true
     }
 

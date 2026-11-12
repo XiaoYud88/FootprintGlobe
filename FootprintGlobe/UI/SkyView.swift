@@ -24,46 +24,69 @@ struct SkyView: View {
 
     private func draw(in context: GraphicsContext, size: CGSize, time: TimeInterval) {
         let rect = CGRect(origin: .zero, size: size)
-        if appearance == .light {
-            drawDaylight(in: context, rect: rect)
+        switch appearance {
+        case .light:
+            drawDaylight(in: context, rect: rect, paper: false)
             drawMoon(in: context, rect: rect, faint: true)
-            return
+        case .paper:
+            drawDaylight(in: context, rect: rect, paper: true)
+            drawPaperGrain(in: context, rect: rect)
+            drawMoon(in: context, rect: rect, faint: true)
+        case .dark:
+            drawNight(in: context, size: size, rect: rect, time: time, neon: false)
+        case .neon:
+            drawNight(in: context, size: size, rect: rect, time: time, neon: true)
         }
+    }
 
-        // 深空底色：不是纯黑，四个角的色温略有差别
+    // MARK: - 夜晚：深空 / 霓虹
+
+    private func drawNight(in context: GraphicsContext, size: CGSize, rect: CGRect,
+                           time: TimeInterval, neon: Bool) {
+        // 底色：不是纯黑，四个角的色温略有差别；霓虹版换成偏紫的底
+        let stops: [Gradient.Stop] = neon
+            ? [.init(color: Color(red: 0.055, green: 0.024, blue: 0.110), location: 0.0),
+               .init(color: Color(red: 0.028, green: 0.014, blue: 0.070), location: 0.45),
+               .init(color: Color(red: 0.008, green: 0.005, blue: 0.028), location: 1.0)]
+            : [.init(color: Color(red: 0.035, green: 0.045, blue: 0.094), location: 0.0),
+               .init(color: Color(red: 0.024, green: 0.030, blue: 0.068), location: 0.45),
+               .init(color: Color(red: 0.010, green: 0.012, blue: 0.030), location: 1.0)]
         context.fill(Path(rect), with: .linearGradient(
-            Gradient(stops: [
-                .init(color: Color(red: 0.035, green: 0.045, blue: 0.094), location: 0.0),
-                .init(color: Color(red: 0.024, green: 0.030, blue: 0.068), location: 0.45),
-                .init(color: Color(red: 0.010, green: 0.012, blue: 0.030), location: 1.0)
-            ]),
+            Gradient(stops: stops),
             startPoint: CGPoint(x: 0, y: 0),
             endPoint: CGPoint(x: size.width * 0.7, y: size.height)))
 
-        // 两团星云（紫、青），非常淡，只是让底色不平
+        // 两团星云，非常淡，只是让底色不平
         drawNebula(in: context, rect: rect,
                    center: CGPoint(x: size.width * 0.16, y: size.height * 0.30),
                    radius: size.width * 0.75,
-                   color: Color(red: 0.36, green: 0.24, blue: 0.62), alpha: 0.13)
+                   color: neon ? Color(red: 1.0, green: 0.24, blue: 0.72)
+                               : Color(red: 0.36, green: 0.24, blue: 0.62),
+                   alpha: neon ? 0.16 : 0.13)
         drawNebula(in: context, rect: rect,
                    center: CGPoint(x: size.width * 0.92, y: size.height * 0.72),
                    radius: size.width * 0.62,
-                   color: Color(red: 0.12, green: 0.42, blue: 0.58), alpha: 0.10)
+                   color: neon ? Color(red: 0.10, green: 0.94, blue: 0.86)
+                               : Color(red: 0.12, green: 0.42, blue: 0.58),
+                   alpha: neon ? 0.14 : 0.10)
 
-        drawMilkyWay(in: context, rect: rect)
-        drawStars(in: context, rect: rect, time: time)
+        drawMilkyWay(in: context, rect: rect, neon: neon)
+        drawStars(in: context, rect: rect, time: time, neon: neon)
         drawMoon(in: context, rect: rect, faint: false)
     }
 
-    // MARK: - 浅色：清晨的纸
+    // MARK: - 浅色：清晨的纸 / 牛皮纸
 
-    private func drawDaylight(in context: GraphicsContext, rect: CGRect) {
+    private func drawDaylight(in context: GraphicsContext, rect: CGRect, paper: Bool) {
+        let stops: [Gradient.Stop] = paper
+            ? [.init(color: Color(red: 0.980, green: 0.965, blue: 0.925), location: 0.0),
+               .init(color: Color(red: 0.957, green: 0.933, blue: 0.874), location: 0.5),
+               .init(color: Color(red: 0.898, green: 0.863, blue: 0.784), location: 1.0)]
+            : [.init(color: Color(red: 0.996, green: 0.984, blue: 0.960), location: 0.0),
+               .init(color: Color(red: 0.968, green: 0.962, blue: 0.958), location: 0.5),
+               .init(color: Color(red: 0.912, green: 0.922, blue: 0.940), location: 1.0)]
         context.fill(Path(rect), with: .linearGradient(
-            Gradient(stops: [
-                .init(color: Color(red: 0.996, green: 0.984, blue: 0.960), location: 0.0),
-                .init(color: Color(red: 0.968, green: 0.962, blue: 0.958), location: 0.5),
-                .init(color: Color(red: 0.912, green: 0.922, blue: 0.940), location: 1.0)
-            ]),
+            Gradient(stops: stops),
             startPoint: CGPoint(x: 0, y: 0),
             endPoint: CGPoint(x: rect.width, y: rect.height)))
 
@@ -74,9 +97,23 @@ struct SkyView: View {
                 Path(ellipseIn: CGRect(x: -rect.width * 0.25, y: -rect.height * 0.20,
                                        width: rect.width * 0.95, height: rect.width * 0.95)),
                 with: .radialGradient(
-                    Gradient(colors: [Color(red: 1.0, green: 0.94, blue: 0.82).opacity(0.85), .clear]),
+                    Gradient(colors: [Color(red: 1.0, green: 0.94, blue: 0.82)
+                        .opacity(paper ? 0.95 : 0.85), .clear]),
                     center: CGPoint(x: rect.width * 0.22, y: rect.height * 0.16),
                     startRadius: 0, endRadius: rect.width * 0.55))
+        }
+    }
+
+    /// 纸纹：几百个极淡的褐点，让「纸质地图」看着像真纸而不是纯色块
+    private func drawPaperGrain(in context: GraphicsContext, rect: CGRect) {
+        var seed: UInt64 = 0x0FA1_7E3C_5B2D_9911
+        for _ in 0..<420 {
+            let x = CGFloat(nextRandom(&seed)) * rect.width
+            let y = CGFloat(nextRandom(&seed)) * rect.height
+            let r = 0.4 + CGFloat(nextRandom(&seed)) * 0.9
+            let alpha = 0.018 + nextRandom(&seed) * 0.030
+            context.fill(Path(ellipseIn: CGRect(x: x, y: y, width: r, height: r)),
+                         with: .color(Color(red: 0.36, green: 0.28, blue: 0.16).opacity(alpha)))
         }
     }
 
@@ -99,8 +136,12 @@ struct SkyView: View {
         }
     }
 
-    private func drawMilkyWay(in context: GraphicsContext, rect: CGRect) {
+    private func drawMilkyWay(in context: GraphicsContext, rect: CGRect, neon: Bool) {
         let center = CGPoint(x: rect.midX, y: rect.midY)
+        let band = neon ? Color(red: 0.70, green: 0.60, blue: 1.0)
+                        : Color(red: 0.80, green: 0.84, blue: 1.0)
+        let bandDim = neon ? Color(red: 0.92, green: 0.36, blue: 0.86)
+                           : Color(red: 0.62, green: 0.70, blue: 0.95)
         context.drawLayer { layer in
             layer.addFilter(.blur(radius: rect.width * 0.055))
             layer.translateBy(x: center.x, y: center.y)
@@ -113,10 +154,10 @@ struct SkyView: View {
                     Path(ellipseIn: CGRect(x: -w, y: -h / 2, width: w * 2, height: h)),
                     with: .radialGradient(
                         Gradient(stops: [
-                            .init(color: Color(red: 0.80, green: 0.84, blue: 1.0)
-                                .opacity(0.085 - Double(index) * 0.02), location: 0),
-                            .init(color: Color(red: 0.62, green: 0.70, blue: 0.95)
-                                .opacity(0.045 - Double(index) * 0.01), location: 0.6),
+                            .init(color: band.opacity((neon ? 0.11 : 0.085) - Double(index) * 0.02),
+                                  location: 0),
+                            .init(color: bandDim.opacity((neon ? 0.06 : 0.045) - Double(index) * 0.01),
+                                  location: 0.6),
                             .init(color: .clear, location: 1)
                         ]),
                         center: .zero, startRadius: 0, endRadius: w))
@@ -126,7 +167,8 @@ struct SkyView: View {
 
     // MARK: - 星点
 
-    private func drawStars(in context: GraphicsContext, rect: CGRect, time: TimeInterval) {
+    private func drawStars(in context: GraphicsContext, rect: CGRect,
+                           time: TimeInterval, neon: Bool) {
         let parallax = ((centerLon - 105).truncatingRemainder(dividingBy: 360)) * 0.22
         var seed: UInt64 = 0x51ED_270B_9A3C_1F7F
 
@@ -152,10 +194,11 @@ struct SkyView: View {
 
                 let px = x.truncatingRemainder(dividingBy: Double(rect.width))
                 let point = CGPoint(x: px < 0 ? px + Double(rect.width) : px, y: y)
+                let starColor = neon ? Color(red: 0.80, green: 1.0, blue: 0.98) : .white
                 context.fill(
                     Path(ellipseIn: CGRect(x: point.x - r, y: point.y - r,
                                            width: r * 2, height: r * 2)),
-                    with: .color(.white.opacity(alpha)))
+                    with: .color(starColor.opacity(alpha)))
 
                 // 亮星给一点十字光芒
                 if layerIndex == 2, alpha > 0.80 {
@@ -165,7 +208,7 @@ struct SkyView: View {
                     cross.addLine(to: CGPoint(x: point.x + arm, y: point.y))
                     cross.move(to: CGPoint(x: point.x, y: point.y - arm))
                     cross.addLine(to: CGPoint(x: point.x, y: point.y + arm))
-                    context.stroke(cross, with: .color(.white.opacity(0.16)), lineWidth: 0.5)
+                    context.stroke(cross, with: .color(starColor.opacity(0.16)), lineWidth: 0.5)
                 }
             }
         }

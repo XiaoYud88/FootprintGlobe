@@ -2,6 +2,7 @@ import SwiftUI
 
 struct HomeView: View {
     @EnvironmentObject private var app: AppModel
+    @ObservedObject private var account = AccountService.shared
 
     // 手势
     @State private var lastDrag: CGSize = .zero
@@ -32,7 +33,7 @@ struct HomeView: View {
                                   pendingCities: pendingCities,
                                   focus: app.focus,
                                   countries: WorldStore.shared.loadIfNeeded(),
-                                  sun: app.sun,
+                                  parallax: app.parallax,
                                   appearance: app.appearance)
                             .transition(.opacity)
                     } else {
@@ -95,6 +96,15 @@ struct HomeView: View {
 
     private var header: some View {
         HStack(alignment: .center, spacing: 10) {
+            if account.signedIn {
+                Button {
+                    showSettings = true
+                } label: {
+                    AvatarView(name: account.displayName, image: account.avatar, size: 34)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("我的账号")
+            }
             VStack(alignment: .leading, spacing: 3) {
                 Text("足迹地球")
                     .font(Theme.Typo.title())

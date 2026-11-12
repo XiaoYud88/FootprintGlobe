@@ -1,5 +1,6 @@
 import SwiftUI
 import Combine
+import UIKit
 import CoreLocation
 
 enum DetailLevel {
@@ -28,11 +29,29 @@ final class AppModel: ObservableObject {
     /// 轻提示
     @Published var toast: String?
 
-    // MARK: 天空
-    /// 太阳直射点：地球上的晨昏线按它画，每分钟刷新一次
-    @Published var sun: GeoCoord = SolarPosition.subsolarPoint(at: Date())
-    private var sunTask: Task<Void, Never>?
+    // MARK: 地球的自转 / 视差
+    /// 闲置一会儿自动慢慢转（M1-V3 加的）
+    @Published var autoRotate: Bool = true {
+        didSet {
+            guard oldValue != autoRotate else { return }
+            UserDefaults.standard.set(autoRotate, forKey: Self.autoRotateKey)
+            noteInteraction()
+        }
+    }
+
+    static let autoRotateKey = "globe.autoRotate"
+    /// 陀螺仪：手腕转动带出的轻微透视变化
+    let motion = MotionService()
+
+    private var lastInteraction = Date()
+    private var rotateTask: Task<Void, Never>?
     private var introPlayed = false
+
+    /// 视差偏移（单位是度）：球面跟着手机倾角轻轻挪，星空不动，于是有了层次。
+    var parallax: CGSize {
+        guard motion.enabled, isGlobe else { return .zero }
+        return CGSize(width: motion.tiltX * 3.4, height: motion.tiltY * 2.6)
+    }
 
     // MARK: 外观
     /// 深色 / 浅色，由用户在「设置」里手选，不跟随系统。
@@ -75,6 +94,7 @@ final class AppModel: ObservableObject {
         let savedMode = AppearanceMode(rawValue: UserDefaults.standard.string(forKey: Self.appearanceKey) ?? "")
         self.appearance = savedMode ?? .dark
         Theme.mode = savedMode ?? .dark
+        self.autoRotate = UserDefaults.standard.object(forKey: Self.autoRotateKey) as? Bool ?? true
 
         // 把 VisitStore 的变化转发出去，视图只订阅 AppModel 就够了
         store.objectWillChange
@@ -113,21 +133,46 @@ final class AppModel: ObservableObject {
         }
         location.start()
         tracker.begin()
-        startSunClock()
+        motion.start()
+        startAutoRotate()
         playIntro()
     }
 
-    /// 晨昏线每分钟走一次就够，肉眼是连续在动的
-    private func startSunClock() {
-        sunTask?.cancel()
-        sunTask = Task { [weak self] in
+    // MARK: - 自动旋转
+
+    /// 24fps 就够顺滑，比 60fps 省电；每帧 0.16°，约 90 秒转一圈。
+    private func startAutoRotate() {
+        rotateTask?.cancel()
+        rotateTask = Task { [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 60_000_000_000)
+                try? await Task.sleep(nanoseconds: 41_666_667)
                 guard let self, !Task.isCancelled else { return }
-                self.sun = SolarPosition.subsolarPoint(at: Date())
+                self.tickAutoRotate()
             }
         }
     }
+
+    private func tickAutoRotate() {
+        guard autoRotate, isGlobe, !autoFollow, zoom >= 0 else { return }
+        // 手指刚离开 8 秒内不转，免得刚摆好角度就被带走
+        guard Date().timeIntervalSince(lastInteraction) > 8 else { return }
+        // 退到后台 / 弹窗挡住时不动，省电
+        guard UIApplication.shared.applicationState == .active else { return }
+
+        var lon = center.lon + 0.16
+        if lon > 180 { lon -= 360 }
+        center = GeoCoord(lon: lon, lat: center.lat)
+    }
+
+    /// 任何手动操作都调一下：重置「闲置计时」，顺便停掉惯性
+    func noteInteraction() {
+        lastInteraction = Date()
+    }
+
+    /// 静止多久之后开始自转（秒）
+    static let idleBeforeRotate: TimeInterval = 8
+
+    var idleSeconds: TimeInterval { Date().timeIntervalSince(lastInteraction) }
 
     /// 启动动画：地球从很远的地方推近，配合星空淡入，打开就不再是「一张静态图」
     private func playIntro() {
@@ -192,6 +237,7 @@ final class AppModel: ObservableObject {
     }
 
     func magnify(from base: Double, scale: CGFloat) {
+        noteInteraction()
         let delta = log2(max(0.05, Double(scale)))
         // 超出上下限时留一点阻尼，手指能感觉到「到头了」，松手再弹回来
         let raw = base + delta
@@ -214,6 +260,7 @@ final class AppModel: ObservableObject {
 
     func pan(dx: CGFloat, dy: CGFloat, size: CGSize) {
         guard size.width > 0, size.height > 0 else { return }
+        noteInteraction()
         autoFollow = false
         if isGlobe {
             let radius = Double(min(size.width, size.height)) * globeRadiusFactor

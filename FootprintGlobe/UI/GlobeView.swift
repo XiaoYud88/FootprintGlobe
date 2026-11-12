@@ -41,8 +41,8 @@ struct GlobeView: View {
     let focus: GeoCoord?
     /// 世界陆地轮廓（只做背景，不参与判定）
     var countries: [WorldCountry] = []
-    /// 太阳直射点，用来画晨昏线（白天 / 黑夜）
-    var sun: GeoCoord = GeoCoord(lon: 0, lat: 0)
+    /// 陀螺仪视差：相机中心额外偏移多少度（球面跟着手腕轻微转，星空不动，有层次）
+    var parallax: CGSize = .zero
     /// 外观只用来触发重绘（Theme 是全局静态，Canvas 不会自己知道它变了）
     var appearance: AppearanceMode = .dark
 
@@ -67,30 +67,29 @@ struct GlobeView: View {
             layer.addFilter(.blur(radius: radius * 0.24))
             let outer = sphereRect.insetBy(dx: -radius * 0.10, dy: -radius * 0.10)
             layer.fill(Path(ellipseIn: outer),
-                       with: .color(Color(red: 0.32, green: 0.52, blue: 1.0)
+                       with: .color(Theme.atmosphere
                         .opacity(Theme.isLight ? 0.14 : 0.26)))
         }
         context.drawLayer { layer in
             layer.addFilter(.blur(radius: radius * 0.07))
             let inner = sphereRect.insetBy(dx: -radius * 0.022, dy: -radius * 0.022)
             layer.fill(Path(ellipseIn: inner),
-                       with: .color(Color(red: 0.55, green: 0.72, blue: 1.0)
+                       with: .color(Theme.atmosphere
                         .opacity(Theme.isLight ? 0.20 : 0.34)))
         }
 
-        // 球体本体：海洋底色，靠近太阳一侧稍亮偏暖
-        let baseTop = Theme.isLight
-            ? Color(red: 0.80, green: 0.86, blue: 0.92)
-            : Color(red: 0.075, green: 0.115, blue: 0.185)
-        let baseBottom = Theme.isLight
-            ? Color(red: 0.86, green: 0.90, blue: 0.93)
-            : Color(red: 0.030, green: 0.052, blue: 0.105)
+        // 球体本体：上下一个渐变，给球一个固定的光向
+        let baseTop = Theme.globeTop
+        let baseBottom = Theme.globeBottom
         context.fill(sphere, with: .linearGradient(
             Gradient(colors: [baseTop, baseBottom]),
             startPoint: CGPoint(x: origin.x - radius * 0.5, y: origin.y - radius),
             endPoint: CGPoint(x: origin.x + radius * 0.6, y: origin.y + radius)))
 
-        let projection = OrthoProjection(origin: origin, radius: radius, center: center)
+        // 陀螺仪视差只挪相机中心，不动球本身：星空静止时球面轻微跟着手转，就有了纵深
+        let lat = min(max(center.lat + Double(parallax.height), -82), 82)
+        let viewCenter = GeoCoord(lon: center.lon + Double(parallax.width), lat: lat)
+        let projection = OrthoProjection(origin: origin, radius: radius, center: viewCenter)
 
         var surface = context
         surface.clip(to: sphere)
@@ -100,15 +99,18 @@ struct GlobeView: View {
         drawLand(in: surface, projection: projection)
         drawPolarCircle(in: surface, projection: projection)
         drawMarkers(in: surface, projection: projection)
-        drawDayNight(in: surface, origin: origin, radius: radius,
-                     projection: projection, sphere: sphere)
+        drawHighlight(in: surface, origin: origin, radius: radius, sphere: sphere)
         drawShading(in: surface, origin: origin, radius: radius, sphere: sphere)
 
         // 边缘一圈极薄的亮边，球才不会「贴」在星空上
         context.stroke(sphere, with: .color(Color.white.opacity(Theme.isLight ? 0.35 : 0.16)),
                        lineWidth: 0.9)
-        context.stroke(sphere, with: .color(Color(red: 0.55, green: 0.72, blue: 1.0).opacity(0.28)),
+        context.stroke(sphere, with: .color(Theme.atmosphere.opacity(0.28)),
                        lineWidth: 0.4)
+        if Theme.isLight {
+            // 浅色系球体跟纸面颜色接近，补一圈墨线才有边界
+            context.stroke(sphere, with: .color(Theme.border.opacity(0.30)), lineWidth: 0.5)
+        }
     }
 
     // MARK: - 世界背景陆地
@@ -217,53 +219,24 @@ struct GlobeView: View {
                                width: radius * 2, height: radius * 2))
     }
 
-    // MARK: - 晨昏线（白天 / 黑夜）
+    // MARK: - 球面光
 
-    /// 用「以太阳直射点为中心的径向渐变」近似真实的日照分布：
-    /// 屏幕上到直射点的距离 d 对应球面角 θ（d = R·sinθ），亮度 ∝ cosθ = √(1−(d/R)²)，
-    /// 所以只要按 d/R 取几档透明度，就能得到一条自然的晨昏线，不用做逐像素光照。
-    private func drawDayNight(in context: GraphicsContext, origin: CGPoint, radius: Double,
-                              projection: OrthoProjection, sphere: Path) {
-        let (sunPoint, _) = projection.project(sun)
-        let peak = Theme.isLight ? 0.50 : 0.84
-
+    /// 上一版的晨昏线在手机小屏上又糊又脏（径向渐变会在地球边缘糊成一圈灰），
+    /// 这一版直接去掉，改成固定方向的一束柔光：左上高光 + 边缘暗角，
+    /// 球看起来是「被灯照着」，干净、也不用跟着时间刷新。
+    private func drawHighlight(in context: GraphicsContext, origin: CGPoint,
+                               radius: Double, sphere: Path) {
+        let light = CGPoint(x: origin.x - radius * 0.34, y: origin.y - radius * 0.40)
+        let peak = Theme.isLight ? 0.18 : 0.22
         context.fill(sphere, with: .radialGradient(
             Gradient(stops: [
-                .init(color: Color.black.opacity(0), location: 0.00),
-                .init(color: Color.black.opacity(peak * 0.05), location: 0.30),
-                .init(color: Color.black.opacity(peak * 0.16), location: 0.50),
-                .init(color: Color.black.opacity(peak * 0.34), location: 0.70),
-                .init(color: Color.black.opacity(peak * 0.56), location: 0.85),
-                .init(color: Color.black.opacity(peak * 0.80), location: 0.95),
-                .init(color: Color.black.opacity(peak), location: 1.00)
-            ]),
-            center: sunPoint,
-            startRadius: 0,
-            endRadius: radius))
-
-        // 晨昏线上一条暖色带（日出日落的那种橘）
-        let warm = Color(red: 1.0, green: 0.56, blue: 0.30)
-        context.fill(sphere, with: .radialGradient(
-            Gradient(stops: [
-                .init(color: warm.opacity(0), location: 0.78),
-                .init(color: warm.opacity(Theme.isLight ? 0.10 : 0.20), location: 0.93),
-                .init(color: warm.opacity(Theme.isLight ? 0.05 : 0.10), location: 0.985),
-                .init(color: warm.opacity(0), location: 1.0)
-            ]),
-            center: sunPoint,
-            startRadius: 0,
-            endRadius: radius))
-
-        // 直射点的高光：一点点就够了，多了像塑料球
-        context.fill(sphere, with: .radialGradient(
-            Gradient(stops: [
-                .init(color: Color.white.opacity(Theme.isLight ? 0.22 : 0.30), location: 0),
-                .init(color: Color.white.opacity(Theme.isLight ? 0.08 : 0.10), location: 0.45),
+                .init(color: Color.white.opacity(peak), location: 0),
+                .init(color: Color.white.opacity(peak * 0.45), location: 0.42),
                 .init(color: .clear, location: 1)
             ]),
-            center: sunPoint,
+            center: light,
             startRadius: 0,
-            endRadius: radius * 0.72))
+            endRadius: radius * 1.12))
     }
 
     // MARK: - 球面明暗

@@ -1,16 +1,30 @@
 import SwiftUI
 
-/// 外观模式：只做「深色 / 浅色」两套，由用户在设置里手动切换（不跟随系统）。
+/// 外观模式：现在有四套（深空 / 日光 / 纸质地图 / 霓虹夜航），由用户在设置里手动切换。
 enum AppearanceMode: String, Codable, CaseIterable, Identifiable {
     case dark
     case light
+    case paper
+    case neon
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
-        case .dark: return "深色"
-        case .light: return "浅色"
+        case .dark: return "深空"
+        case .light: return "日光"
+        case .paper: return "纸质地图"
+        case .neon: return "霓虹夜航"
+        }
+    }
+
+    /// 分段控件里用短名，四个放得下
+    var shortTitle: String {
+        switch self {
+        case .dark: return "深空"
+        case .light: return "日光"
+        case .paper: return "纸图"
+        case .neon: return "霓虹"
         }
     }
 
@@ -18,26 +32,44 @@ enum AppearanceMode: String, Codable, CaseIterable, Identifiable {
         switch self {
         case .dark: return "moon.stars.fill"
         case .light: return "sun.max.fill"
+        case .paper: return "map.fill"
+        case .neon: return "sparkles"
+        }
+    }
+
+    /// 一句话说明，设置页的 footer 用
+    var hint: String {
+        switch self {
+        case .dark: return "深蓝夜空 + 发光城市，默认主题"
+        case .light: return "米白纸面 + 深色文字，白天看着最舒服"
+        case .paper: return "仿旧地图的牛皮纸色，像一本旅行手帐"
+        case .neon: return "紫黑底 + 青色霓虹，晚上看最带感"
         }
     }
 
     var colorScheme: ColorScheme {
         switch self {
-        case .dark: return .dark
-        case .light: return .light
+        case .dark, .neon: return .dark
+        case .light, .paper: return .light
+        }
+    }
+
+    /// 「底色是浅的」——决定明暗描边、暗角强度这些二选一的取值
+    var isLight: Bool {
+        switch self {
+        case .light, .paper: return true
+        case .dark, .neon: return false
         }
     }
 }
 
-/// 主题：一套色板 + 两套取值。
-///
-/// 用法不变：视图里继续写 `Theme.brand` / `Theme.textSecondary`，
+/// 主题：四套色板，视图里只写语义色（`Theme.brand` / `Theme.textSecondary`），
 /// 切换外观时只改 `Theme.mode`，整棵视图树重建一次即可换肤。
 enum Theme {
     /// 当前外观（由 AppModel 在启动和切换时写入）
     nonisolated(unsafe) static var mode: AppearanceMode = .dark
 
-    static var isLight: Bool { mode == .light }
+    static var isLight: Bool { mode.isLight }
 
     static var colorScheme: ColorScheme { mode.colorScheme }
 
@@ -64,6 +96,12 @@ enum Theme {
 
         let card: Color
         let cardElevated: Color
+
+        /// 球体本体的上下渐变（不是海洋色，球比纸面深一点才有体积）
+        let globeTop: Color
+        let globeBottom: Color
+        /// 大气辉光
+        let atmosphere: Color
     }
 
     static let darkPalette = Palette(
@@ -86,7 +124,11 @@ enum Theme {
         textTertiary: Color.white.opacity(0.38),
 
         card: Color(red: 0.09, green: 0.10, blue: 0.14),
-        cardElevated: Color(red: 0.13, green: 0.14, blue: 0.19)
+        cardElevated: Color(red: 0.13, green: 0.14, blue: 0.19),
+
+        globeTop: Color(red: 0.075, green: 0.115, blue: 0.185),
+        globeBottom: Color(red: 0.030, green: 0.052, blue: 0.105),
+        atmosphere: Color(red: 0.32, green: 0.52, blue: 1.0)
     )
 
     static let lightPalette = Palette(
@@ -109,20 +151,87 @@ enum Theme {
         textTertiary: Color(red: 0.106, green: 0.129, blue: 0.180).opacity(0.42),
 
         card: Color(red: 0.996, green: 0.988, blue: 0.973),
-        cardElevated: .white
+        cardElevated: .white,
+
+        globeTop: Color(red: 0.800, green: 0.860, blue: 0.920),
+        globeBottom: Color(red: 0.860, green: 0.900, blue: 0.930),
+        atmosphere: Color(red: 0.55, green: 0.72, blue: 1.0)
     )
 
-    static var current: Palette { mode == .light ? lightPalette : darkPalette }
+    /// 纸质地图：牛皮纸 + 墨线 + 砖红标记，像把地球画在一张老地图上
+    static let paperPalette = Palette(
+        brand: Color(red: 0.706, green: 0.286, blue: 0.196),
+        brandLight: Color(red: 0.827, green: 0.412, blue: 0.278),
+        brandDim: Color(red: 0.706, green: 0.286, blue: 0.196).opacity(0.18),
+        wish: Color(red: 0.157, green: 0.470, blue: 0.416),
+        pending: Color(red: 0.741, green: 0.510, blue: 0.106),
+        gold: Color(red: 0.639, green: 0.451, blue: 0.125),
+
+        ocean: Color(red: 0.957, green: 0.929, blue: 0.867),
+        oceanDeep: Color(red: 0.925, green: 0.890, blue: 0.812),
+        land: Color(red: 0.867, green: 0.812, blue: 0.690),
+        landDim: Color(red: 0.906, green: 0.867, blue: 0.769),
+        border: Color(red: 0.451, green: 0.361, blue: 0.235),
+        graticule: Color(red: 0.729, green: 0.667, blue: 0.529),
+
+        textPrimary: Color(red: 0.196, green: 0.151, blue: 0.098),
+        textSecondary: Color(red: 0.196, green: 0.151, blue: 0.098).opacity(0.68),
+        textTertiary: Color(red: 0.196, green: 0.151, blue: 0.098).opacity(0.44),
+
+        card: Color(red: 0.980, green: 0.961, blue: 0.914),
+        cardElevated: Color(red: 1.0, green: 0.988, blue: 0.957),
+
+        globeTop: Color(red: 0.914, green: 0.867, blue: 0.765),
+        globeBottom: Color(red: 0.847, green: 0.792, blue: 0.671),
+        atmosphere: Color(red: 0.706, green: 0.573, blue: 0.353)
+    )
+
+    /// 霓虹夜航：紫黑底 + 青色发光，晚上关灯看最漂亮
+    static let neonPalette = Palette(
+        brand: Color(red: 0.184, green: 0.937, blue: 0.847),
+        brandLight: Color(red: 0.549, green: 1.0, blue: 0.949),
+        brandDim: Color(red: 0.184, green: 0.937, blue: 0.847).opacity(0.20),
+        wish: Color(red: 1.0, green: 0.353, blue: 0.725),
+        pending: Color(red: 1.0, green: 0.808, blue: 0.286),
+        gold: Color(red: 1.0, green: 0.878, blue: 0.478),
+
+        ocean: Color(red: 0.031, green: 0.020, blue: 0.071),
+        oceanDeep: Color(red: 0.012, green: 0.008, blue: 0.035),
+        land: Color(red: 0.114, green: 0.078, blue: 0.212),
+        landDim: Color(red: 0.075, green: 0.051, blue: 0.149),
+        border: Color(red: 0.451, green: 0.302, blue: 0.851),
+        graticule: Color(red: 0.353, green: 0.224, blue: 0.655),
+
+        textPrimary: .white,
+        textSecondary: Color.white.opacity(0.66),
+        textTertiary: Color.white.opacity(0.40),
+
+        card: Color(red: 0.075, green: 0.051, blue: 0.129),
+        cardElevated: Color(red: 0.114, green: 0.078, blue: 0.188),
+
+        globeTop: Color(red: 0.094, green: 0.055, blue: 0.196),
+        globeBottom: Color(red: 0.035, green: 0.020, blue: 0.086),
+        atmosphere: Color(red: 0.184, green: 0.937, blue: 0.847)
+    )
+
+    static var current: Palette {
+        switch mode {
+        case .dark: return darkPalette
+        case .light: return lightPalette
+        case .paper: return paperPalette
+        case .neon: return neonPalette
+        }
+    }
 
     // MARK: - 语义色（对外 API 保持不变）
 
-    /// 品牌紫：去过的地方
+    /// 品牌色：去过的地方
     static var brand: Color { current.brand }
     static var brandLight: Color { current.brandLight }
     static var brandDim: Color { current.brandDim }
-    /// 想去：青
+    /// 想去
     static var wish: Color { current.wish }
-    /// 待确认：琥珀
+    /// 待确认
     static var pending: Color { current.pending }
     /// 徽章金
     static var gold: Color { current.gold }
@@ -141,7 +250,11 @@ enum Theme {
     static var card: Color { current.card }
     static var cardElevated: Color { current.cardElevated }
 
-    /// 玻璃浮层的描边（深浅两套都要淡，不能发光过头）
+    static var globeTop: Color { current.globeTop }
+    static var globeBottom: Color { current.globeBottom }
+    static var atmosphere: Color { current.atmosphere }
+
+    /// 玻璃浮层的描边（浅色系两套都要淡，不能发光过头）
     static var hairline: Color {
         isLight ? Color.black.opacity(0.08) : Color.white.opacity(0.10)
     }
@@ -210,6 +323,8 @@ extension Theme {
         static let floatGap: CGFloat = 10
         /// 每个城市最多几张照片
         static let maxPhotosPerCity: Int = 3
+        /// 头像直径（资料卡 / 首页都用这一档）
+        static let avatar: CGFloat = 44
     }
 
     /// 字号体系：标题 / 副标题 / 标签 / 正文 / 注释，只允许这几档。
