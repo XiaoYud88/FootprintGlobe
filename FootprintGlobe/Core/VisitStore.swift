@@ -261,6 +261,26 @@ final class VisitStore: ObservableObject {
         save()
     }
 
+    // MARK: - 备份 / 恢复
+
+    /// 导出当前存档的原始 JSON（备份包里就是这一份）
+    func exportData() throws -> Data {
+        let snapshot = Snapshot(visits: Array(visits.values), pendings: Array(pendings.values))
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        return try encoder.encode(snapshot)
+    }
+
+    /// 用备份包里的 JSON 整体替换当前存档。返回城市数 / 候选数，方便界面回显。
+    @discardableResult
+    func importData(_ data: Data) throws -> (cities: Int, pendings: Int) {
+        let snapshot = try JSONDecoder().decode(Snapshot.self, from: data)
+        visits = snapshot.visits.reduce(into: [:]) { $0[$1.code] = $1 }
+        pendings = snapshot.pendings.reduce(into: [:]) { $0[$1.code] = $1 }
+        save()
+        return (visits.count, pendings.count)
+    }
+
     // MARK: - 持久化
 
     private func load() {

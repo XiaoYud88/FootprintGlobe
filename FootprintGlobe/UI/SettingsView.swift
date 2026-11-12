@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import UniformTypeIdentifiers
 
 struct SettingsView: View {
     @EnvironmentObject private var app: AppModel
@@ -9,6 +10,19 @@ struct SettingsView: View {
     @State private var minSamples: Int = 2
     @State private var showResetConfirm = false
     @State private var notifyOn = false
+
+    // 备份 / 恢复
+    @State private var busy = false
+    @State private var backupURL: URL?
+    @State private var backupSummary: BackupService.Summary?
+    @State private var backups: [URL] = []
+    @State private var showImporter = false
+    @State private var restoreTarget: URL?
+    @State private var restoreSummary: BackupService.Summary?
+    @State private var showRestoreConfirm = false
+    @State private var alertTitle = ""
+    @State private var alertMessage = ""
+    @State private var showAlert = false
 
     var body: some View {
         NavigationStack {
@@ -106,6 +120,55 @@ struct SettingsView: View {
                     }
                 }
 
+                // MARK: 备份与恢复
+                Section {
+                    Button {
+                        runBackup()
+                    } label: {
+                        HStack {
+                            Text("立即备份")
+                            Spacer()
+                            if busy {
+                                ProgressView().scaleEffect(0.8)
+                            } else if let summary = backupSummary {
+                                Text(summary.sizeText)
+                                    .foregroundColor(Theme.textSecondary)
+                            }
+                        }
+                    }
+                    .disabled(busy)
+
+                    if let url = backupURL {
+                        ShareLink(item: url) {
+                            Label("导出刚做好的备份", systemImage: "square.and.arrow.up")
+                                .font(.system(size: 13, design: .rounded))
+                        }
+                    }
+
+                    Button("从文件恢复…") { showImporter = true }
+
+                    ForEach(backups, id: \.self) { url in
+                        Button {
+                            preview(url)
+                        } label: {
+                            HStack {
+                                Text(url.lastPathComponent)
+                                    .font(.system(size: 12, design: .rounded))
+                                    .lineLimit(1)
+                                Spacer()
+                                Text(fileSizeText(url))
+                                    .font(.system(size: 11, design: .rounded))
+                                    .foregroundColor(Theme.textTertiary)
+                            }
+                        }
+                    }
+                } header: {
+                    Text("备份与恢复")
+                } footer: {
+                    Text("备份包是一个普通 zip（记录 + 照片），可以存到「文件」或隔空投送出去。恢复会覆盖当前全部记录，所以恢复前会先问你一次。最近 \(BackupService.keepCount) 份自动留在这里。")
+                        .font(.system(size: 11, design: .rounded))
+                }
+
                 // MARK: 数据
                 Section {
                     row("已记录城市", "\(app.visits.cityCount) / \(app.boundary.cityCount)")
@@ -133,7 +196,7 @@ struct SettingsView: View {
                     HStack {
                         Text("版本")
                         Spacer()
-                        Text("0.3.0 (M1-V1)")
+                        Text("0.4.0 (M1-V2)")
                             .foregroundColor(Theme.textTertiary)
                     }
                 } header: {
@@ -152,6 +215,7 @@ struct SettingsView: View {
                 dwellHours = app.tracker.config.dwellHours
                 minSamples = app.tracker.config.minSamples
                 notifyOn = app.notifications.enabled
+                refreshBackups()
                 Task { await app.notifications.refreshAuthorization() }
             }
             .onChange(of: dwellHours) { _, newValue in
@@ -165,6 +229,30 @@ struct SettingsView: View {
                     app.visits.resetAll()
                 }
                 Button("取消", role: .cancel) {}
+            }
+            .confirmationDialog("用这份备份覆盖当前记录？", isPresented: $showRestoreConfirm, titleVisibility: .visible) {
+                Button("覆盖恢复", role: .destructive) { performRestore() }
+                Button("取消", role: .cancel) { restoreTarget = nil }
+            } message: {
+                if let summary = restoreSummary {
+                    Text("包里是 \(summary.contentsText)。当前 \(app.visits.cityCount) 个城市的记录会被替换掉。")
+                }
+            }
+            .fileImporter(isPresented: $showImporter,
+                          allowedContentTypes: [.zip],
+                          allowsMultipleSelection: false) { result in
+                switch result {
+                case .success(let urls):
+                    guard let url = urls.first else { return }
+                    preview(url)
+                case .failure(let error):
+                    show(title: "选择文件失败", message: error.localizedDescription)
+                }
+            }
+            .alert(alertTitle, isPresented: $showAlert) {
+                Button("好", role: .cancel) {}
+            } message: {
+                Text(alertMessage)
             }
         }
         .preferredColorScheme(Theme.colorScheme)
@@ -200,5 +288,67 @@ struct SettingsView: View {
         case .authorizedAlways: return "始终允许"
         @unknown default: return "未知"
         }
+    }
+
+    // MARK: - 备份 / 恢复
+
+    private func refreshBackups() {
+        backups = BackupService.shared.existingBackups()
+    }
+
+    private func runBackup() {
+        busy = true
+        defer { busy = false }
+        do {
+            let url = try BackupService.shared.makeBackup(store: app.visits)
+            backupURL = url
+            backupSummary = try? BackupService.shared.inspect(url)
+            refreshBackups()
+            app.showToast("备份好了 · \(backupSummary?.sizeText ?? "")")
+        } catch {
+            show(title: "备份失败", message: error.localizedDescription)
+        }
+    }
+
+    /// 先读包内容，让确认弹窗能说清楚「包里是什么」再覆盖
+    private func preview(_ url: URL) {
+        do {
+            restoreSummary = try BackupService.shared.inspect(url)
+            restoreTarget = url
+            showRestoreConfirm = true
+        } catch {
+            show(title: "这个包打不开", message: error.localizedDescription)
+        }
+    }
+
+    private func performRestore() {
+        guard let url = restoreTarget else { return }
+        busy = true
+        defer {
+            busy = false
+            restoreTarget = nil
+        }
+        do {
+            let summary = try BackupService.shared.restore(from: url, store: app.visits)
+            refreshBackups()
+            app.showToast("已恢复 \(summary.cityCount) 个城市")
+        } catch {
+            show(title: "恢复失败", message: error.localizedDescription)
+        }
+    }
+
+    private func fileSizeText(_ url: URL) -> String {
+        let attrs = try? FileManager.default.attributesOfItem(atPath: url.path)
+        let bytes = (attrs?[.size] as? Int) ?? 0
+        if bytes >= 1024 * 1024 {
+            return String(format: "%.1f MB", Double(bytes) / 1024 / 1024)
+        }
+        return "\(max(1, bytes / 1024)) KB"
+    }
+
+    private func show(title: String, message: String) {
+        alertTitle = title
+        alertMessage = message
+        showAlert = true
     }
 }

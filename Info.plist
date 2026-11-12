@@ -17,9 +17,13 @@
 	<key>CFBundlePackageType</key>
 	<string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.3.0</string>
+	<string>0.4.0</string>
 	<key>CFBundleVersion</key>
-	<string>3</string>
+	<string>4</string>
+	<key>UIFileSharingEnabled</key>
+	<true/>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>UIApplicationSceneManifest</key>
@@ -47,6 +51,8 @@
 	</array>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>用来给城市添加最多 3 张照片。照片只存在你自己的手机上，不会上传，也不需要账号。</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>用来把生成的足迹海报存进相册。</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>用来自动记录你去过的城市。位置只在本机计算，不会上传，也不需要账号。</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>

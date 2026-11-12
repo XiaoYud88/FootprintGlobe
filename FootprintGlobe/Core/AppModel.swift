@@ -28,6 +28,12 @@ final class AppModel: ObservableObject {
     /// 轻提示
     @Published var toast: String?
 
+    // MARK: 天空
+    /// 太阳直射点：地球上的晨昏线按它画，每分钟刷新一次
+    @Published var sun: GeoCoord = SolarPosition.subsolarPoint(at: Date())
+    private var sunTask: Task<Void, Never>?
+    private var introPlayed = false
+
     // MARK: 外观
     /// 深色 / 浅色，由用户在「设置」里手选，不跟随系统。
     @Published var appearance: AppearanceMode = .dark {
@@ -107,6 +113,30 @@ final class AppModel: ObservableObject {
         }
         location.start()
         tracker.begin()
+        startSunClock()
+        playIntro()
+    }
+
+    /// 晨昏线每分钟走一次就够，肉眼是连续在动的
+    private func startSunClock() {
+        sunTask?.cancel()
+        sunTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 60_000_000_000)
+                guard let self, !Task.isCancelled else { return }
+                self.sun = SolarPosition.subsolarPoint(at: Date())
+            }
+        }
+    }
+
+    /// 启动动画：地球从很远的地方推近，配合星空淡入，打开就不再是「一张静态图」
+    private func playIntro() {
+        guard !introPlayed else { return }
+        introPlayed = true
+        zoom = -1.15
+        withAnimation(.easeOut(duration: 1.35)) {
+            zoom = 0
+        }
     }
 
     private func handle(_ location: CLLocation) {
@@ -130,7 +160,9 @@ final class AppModel: ObservableObject {
     var lonSpan: Double { 200.0 / pow(2, zoom) }
 
     var globeRadiusFactor: Double {
-        0.34 + 0.20 * min(zoom, Self.globeThreshold) / Self.globeThreshold
+        // 启动动画期间 zoom 会是负数（球从远处推近），这里留一个下限，别把球缩没了
+        let z = max(-0.8, min(zoom, Self.globeThreshold))
+        return 0.34 + 0.20 * z / Self.globeThreshold
     }
 
     var detail: DetailLevel {
@@ -161,7 +193,23 @@ final class AppModel: ObservableObject {
 
     func magnify(from base: Double, scale: CGFloat) {
         let delta = log2(max(0.05, Double(scale)))
-        setZoom(base + delta)
+        // 超出上下限时留一点阻尼，手指能感觉到「到头了」，松手再弹回来
+        let raw = base + delta
+        if raw < 0 {
+            zoom = raw * 0.32
+        } else if raw > Self.maxZoom {
+            zoom = Self.maxZoom + (raw - Self.maxZoom) * 0.32
+        } else {
+            zoom = raw
+        }
+    }
+
+    /// 双指松手后把越界的缩放弹回合法区间
+    func settleZoom() {
+        guard zoom < 0 || zoom > Self.maxZoom else { return }
+        withAnimation(.spring(response: 0.34, dampingFraction: 0.82)) {
+            setZoom(zoom)
+        }
     }
 
     func pan(dx: CGFloat, dy: CGFloat, size: CGSize) {

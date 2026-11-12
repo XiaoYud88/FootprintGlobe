@@ -18,7 +18,7 @@ struct HomeView: View {
 
     var body: some View {
         ZStack {
-            StarField(isLight: Theme.isLight)
+            SkyView(appearance: app.appearance, centerLon: app.center.lon)
                 .ignoresSafeArea()
 
             GeometryReader { geo in
@@ -32,6 +32,7 @@ struct HomeView: View {
                                   pendingCities: pendingCities,
                                   focus: app.focus,
                                   countries: WorldStore.shared.loadIfNeeded(),
+                                  sun: app.sun,
                                   appearance: app.appearance)
                             .transition(.opacity)
                     } else {
@@ -410,7 +411,10 @@ struct HomeView: View {
                 }
                 app.magnify(from: pinchBase ?? app.zoom, scale: scale)
             }
-            .onEnded { _ in pinchBase = nil }
+            .onEnded { _ in
+                pinchBase = nil
+                app.settleZoom()
+            }
     }
 }
 
@@ -420,7 +424,8 @@ struct ProgressRing: View {
     var body: some View {
         ZStack {
             Circle()
-                .stroke(Color.white.opacity(0.12), lineWidth: 3)
+                .stroke(Theme.isLight ? Color.black.opacity(0.10) : Color.white.opacity(0.12),
+                        lineWidth: 3)
             Circle()
                 .trim(from: 0, to: min(1, max(0, progress)))
                 .stroke(AngularGradient(colors: [Theme.brand, Theme.brandLight, Theme.wish],
@@ -431,44 +436,3 @@ struct ProgressRing: View {
     }
 }
 
-struct StarField: View {
-    var isLight: Bool = false
-
-    var body: some View {
-        Canvas { context, size in
-            if isLight {
-                // 浅色主题下不要满天星，用一张干净的米白渐变纸
-                context.fill(Path(CGRect(origin: .zero, size: size)),
-                             with: .linearGradient(
-                                Gradient(colors: [Color(red: 0.995, green: 0.988, blue: 0.972),
-                                                  Theme.oceanDeep]),
-                                startPoint: .zero,
-                                endPoint: CGPoint(x: size.width, y: size.height)))
-                return
-            }
-
-            context.fill(Path(CGRect(origin: .zero, size: size)),
-                         with: .linearGradient(
-                            Gradient(colors: [Color(red: 0.03, green: 0.035, blue: 0.06),
-                                              Theme.oceanDeep]),
-                            startPoint: .zero,
-                            endPoint: CGPoint(x: size.width, y: size.height)))
-
-            var seed: UInt64 = 0x9E37_79B9_7F4A_7C15
-            for _ in 0..<150 {
-                let x = Double(nextRandom(&seed)) * Double(size.width)
-                let y = Double(nextRandom(&seed)) * Double(size.height)
-                let r = 0.4 + Double(nextRandom(&seed)) * 1.1
-                let alpha = 0.10 + Double(nextRandom(&seed)) * 0.55
-                let rect = CGRect(x: x - r, y: y - r, width: r * 2, height: r * 2)
-                context.fill(Path(ellipseIn: rect), with: .color(.white.opacity(alpha)))
-            }
-        }
-        .id(isLight)
-    }
-
-    private func nextRandom(_ seed: inout UInt64) -> Double {
-        seed = seed &* 6_364_136_223_846_793_005 &+ 1_442_695_040_888_963_407
-        return Double((seed >> 33) & 0x7FFF_FFFF) / Double(0x7FFF_FFFF)
-    }
-}

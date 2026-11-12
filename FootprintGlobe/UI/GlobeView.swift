@@ -41,6 +41,8 @@ struct GlobeView: View {
     let focus: GeoCoord?
     /// 世界陆地轮廓（只做背景，不参与判定）
     var countries: [WorldCountry] = []
+    /// 太阳直射点，用来画晨昏线（白天 / 黑夜）
+    var sun: GeoCoord = GeoCoord(lon: 0, lat: 0)
     /// 外观只用来触发重绘（Theme 是全局静态，Canvas 不会自己知道它变了）
     var appearance: AppearanceMode = .dark
 
@@ -60,20 +62,33 @@ struct GlobeView: View {
                                 width: radius * 2, height: radius * 2)
         let sphere = Path(ellipseIn: sphereRect)
 
-        // 外层大气光
+        // 大气光：内圈紧一点、外圈散一点，像真有大气的散射
         context.drawLayer { layer in
-            layer.addFilter(.blur(radius: radius * 0.10))
-            layer.fill(Path(ellipseIn: sphereRect.insetBy(dx: -radius * 0.035, dy: -radius * 0.035)),
-                       with: .color(Theme.brand.opacity(0.30)))
+            layer.addFilter(.blur(radius: radius * 0.24))
+            let outer = sphereRect.insetBy(dx: -radius * 0.10, dy: -radius * 0.10)
+            layer.fill(Path(ellipseIn: outer),
+                       with: .color(Color(red: 0.32, green: 0.52, blue: 1.0)
+                        .opacity(Theme.isLight ? 0.14 : 0.26)))
+        }
+        context.drawLayer { layer in
+            layer.addFilter(.blur(radius: radius * 0.07))
+            let inner = sphereRect.insetBy(dx: -radius * 0.022, dy: -radius * 0.022)
+            layer.fill(Path(ellipseIn: inner),
+                       with: .color(Color(red: 0.55, green: 0.72, blue: 1.0)
+                        .opacity(Theme.isLight ? 0.20 : 0.34)))
         }
 
-        // 球体本体
-        let topColor = Theme.isLight ? Theme.ocean : Color(red: 0.10, green: 0.13, blue: 0.22)
-        context.fill(sphere, with: .radialGradient(
-            Gradient(colors: [topColor, Theme.oceanDeep]),
-            center: CGPoint(x: origin.x - radius * 0.35, y: origin.y - radius * 0.38),
-            startRadius: 0,
-            endRadius: radius * 1.55))
+        // 球体本体：海洋底色，靠近太阳一侧稍亮偏暖
+        let baseTop = Theme.isLight
+            ? Color(red: 0.80, green: 0.86, blue: 0.92)
+            : Color(red: 0.075, green: 0.115, blue: 0.185)
+        let baseBottom = Theme.isLight
+            ? Color(red: 0.86, green: 0.90, blue: 0.93)
+            : Color(red: 0.030, green: 0.052, blue: 0.105)
+        context.fill(sphere, with: .linearGradient(
+            Gradient(colors: [baseTop, baseBottom]),
+            startPoint: CGPoint(x: origin.x - radius * 0.5, y: origin.y - radius),
+            endPoint: CGPoint(x: origin.x + radius * 0.6, y: origin.y + radius)))
 
         let projection = OrthoProjection(origin: origin, radius: radius, center: center)
 
@@ -85,9 +100,15 @@ struct GlobeView: View {
         drawLand(in: surface, projection: projection)
         drawPolarCircle(in: surface, projection: projection)
         drawMarkers(in: surface, projection: projection)
+        drawDayNight(in: surface, origin: origin, radius: radius,
+                     projection: projection, sphere: sphere)
         drawShading(in: surface, origin: origin, radius: radius, sphere: sphere)
 
-        context.stroke(sphere, with: .color(Theme.brand.opacity(0.40)), lineWidth: 0.8)
+        // 边缘一圈极薄的亮边，球才不会「贴」在星空上
+        context.stroke(sphere, with: .color(Color.white.opacity(Theme.isLight ? 0.35 : 0.16)),
+                       lineWidth: 0.9)
+        context.stroke(sphere, with: .color(Color(red: 0.55, green: 0.72, blue: 1.0).opacity(0.28)),
+                       lineWidth: 0.4)
     }
 
     // MARK: - 世界背景陆地
@@ -196,28 +217,69 @@ struct GlobeView: View {
                                width: radius * 2, height: radius * 2))
     }
 
+    // MARK: - 晨昏线（白天 / 黑夜）
+
+    /// 用「以太阳直射点为中心的径向渐变」近似真实的日照分布：
+    /// 屏幕上到直射点的距离 d 对应球面角 θ（d = R·sinθ），亮度 ∝ cosθ = √(1−(d/R)²)，
+    /// 所以只要按 d/R 取几档透明度，就能得到一条自然的晨昏线，不用做逐像素光照。
+    private func drawDayNight(in context: GraphicsContext, origin: CGPoint, radius: Double,
+                              projection: OrthoProjection, sphere: Path) {
+        let (sunPoint, _) = projection.project(sun)
+        let peak = Theme.isLight ? 0.50 : 0.84
+
+        context.fill(sphere, with: .radialGradient(
+            Gradient(stops: [
+                .init(color: Color.black.opacity(0), location: 0.00),
+                .init(color: Color.black.opacity(peak * 0.05), location: 0.30),
+                .init(color: Color.black.opacity(peak * 0.16), location: 0.50),
+                .init(color: Color.black.opacity(peak * 0.34), location: 0.70),
+                .init(color: Color.black.opacity(peak * 0.56), location: 0.85),
+                .init(color: Color.black.opacity(peak * 0.80), location: 0.95),
+                .init(color: Color.black.opacity(peak), location: 1.00)
+            ]),
+            center: sunPoint,
+            startRadius: 0,
+            endRadius: radius))
+
+        // 晨昏线上一条暖色带（日出日落的那种橘）
+        let warm = Color(red: 1.0, green: 0.56, blue: 0.30)
+        context.fill(sphere, with: .radialGradient(
+            Gradient(stops: [
+                .init(color: warm.opacity(0), location: 0.78),
+                .init(color: warm.opacity(Theme.isLight ? 0.10 : 0.20), location: 0.93),
+                .init(color: warm.opacity(Theme.isLight ? 0.05 : 0.10), location: 0.985),
+                .init(color: warm.opacity(0), location: 1.0)
+            ]),
+            center: sunPoint,
+            startRadius: 0,
+            endRadius: radius))
+
+        // 直射点的高光：一点点就够了，多了像塑料球
+        context.fill(sphere, with: .radialGradient(
+            Gradient(stops: [
+                .init(color: Color.white.opacity(Theme.isLight ? 0.22 : 0.30), location: 0),
+                .init(color: Color.white.opacity(Theme.isLight ? 0.08 : 0.10), location: 0.45),
+                .init(color: .clear, location: 1)
+            ]),
+            center: sunPoint,
+            startRadius: 0,
+            endRadius: radius * 0.72))
+    }
+
     // MARK: - 球面明暗
 
     private func drawShading(in context: GraphicsContext, origin: CGPoint,
                              radius: Double, sphere: Path) {
+        // 边缘暗角：球体边缘向内收光，立体感主要靠这一层
         context.fill(sphere, with: .radialGradient(
             Gradient(stops: [
-                .init(color: .clear, location: 0.45),
-                .init(color: Color.black.opacity(Theme.isLight ? 0.16 : 0.55), location: 1.0)
+                .init(color: .clear, location: 0.52),
+                .init(color: Color.black.opacity(Theme.isLight ? 0.10 : 0.26), location: 0.86),
+                .init(color: Color.black.opacity(Theme.isLight ? 0.22 : 0.46), location: 1.0)
             ]),
-            center: CGPoint(x: origin.x - radius * 0.28, y: origin.y - radius * 0.30),
-            startRadius: radius * 0.2,
-            endRadius: radius * 1.5))
-
-        // 左上方高光
-        context.fill(sphere, with: .radialGradient(
-            Gradient(stops: [
-                .init(color: Color.white.opacity(Theme.isLight ? 0.42 : 0.10), location: 0),
-                .init(color: .clear, location: 0.55)
-            ]),
-            center: CGPoint(x: origin.x - radius * 0.42, y: origin.y - radius * 0.45),
-            startRadius: 0,
-            endRadius: radius * 0.9))
+            center: origin,
+            startRadius: radius * 0.25,
+            endRadius: radius))
     }
 
     // MARK: - 折线构建

@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// 护照页：把「我去过多少、走到哪、拿到了什么」一次说清楚。
 ///
@@ -9,6 +10,8 @@ struct PassportView: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var onlyUnlocked = false
+    @State private var posterImage: UIImage?
+    @State private var showPoster = false
 
     private var stats: TravelStats { app.stats }
     private var badges: [BadgeState] { app.badges(for: stats) }
@@ -38,6 +41,14 @@ struct PassportView: View {
             .navigationTitle("足迹护照")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        makePoster()
+                    } label: {
+                        Image(systemName: "square.and.arrow.up")
+                    }
+                    .accessibilityLabel("生成足迹海报")
+                }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("完成") { dismiss() }
                         .font(Theme.Typo.label())
@@ -45,6 +56,47 @@ struct PassportView: View {
             }
         }
         .preferredColorScheme(Theme.colorScheme)
+        .sheet(isPresented: $showPoster) {
+            if let posterImage {
+                PosterSheet(image: posterImage)
+            }
+        }
+    }
+
+    /// 把当前这份统计渲染成海报。地球的视角取「去过的地方的重心」，比当前镜头位置更像一张作品。
+    private func makePoster() {
+        var data = PosterData(stats: stats)
+        data.provinces = app.boundary.provinces
+        data.visitedProvinceCodes = app.visitedProvinceCodes
+        data.visitedCities = app.visitedCities
+        data.pendingCities = app.visits.pendingList.compactMap { app.boundary.city(code: $0.code) }
+        data.countries = WorldStore.shared.loadIfNeeded()
+        data.center = posterCenter()
+        data.sun = app.sun
+        data.unlockedBadges = unlockedCount
+        data.totalBadges = BadgeCatalog.total
+        data.version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.4.0"
+
+        guard let image = PosterRenderer.render(data) else { return }
+        posterImage = image
+        showPoster = true
+    }
+
+    private func posterCenter() -> GeoCoord {
+        let cities = app.visitedCities
+        guard !cities.isEmpty else { return GeoCoord(lon: 105, lat: 30) }
+        var x = 0.0, y = 0.0, z = 0.0
+        for city in cities {
+            let lon = city.center.lon * .pi / 180
+            let lat = city.center.lat * .pi / 180
+            x += cos(lat) * cos(lon)
+            y += cos(lat) * sin(lon)
+            z += sin(lat)
+        }
+        let count = Double(cities.count)
+        let lat = atan2(z / count, sqrt(pow(x / count, 2) + pow(y / count, 2))) * 180 / .pi
+        let lon = atan2(y / count, x / count) * 180 / .pi
+        return GeoCoord(lon: lon, lat: max(-55, min(70, lat)))
     }
 
     // MARK: - 顶部称号

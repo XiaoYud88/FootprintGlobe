@@ -30,6 +30,9 @@ final class PhotoStore {
         cache.countLimit = 60
     }
 
+    /// 备份用：图片实际存放的目录
+    var directoryURL: URL { directory }
+
     // MARK: - 写入
 
     /// 把一张原图压到最长边 1400 存盘，返回文件名。失败返回 nil。
@@ -53,6 +56,34 @@ final class PhotoStore {
     func delete(_ name: String) {
         cache.removeObject(forKey: name as NSString)
         try? FileManager.default.removeItem(at: directory.appendingPathComponent(name))
+    }
+
+    /// 备份用：把解压出来的图片按原文件名写回去
+    @discardableResult
+    func writeRaw(_ data: Data, as name: String) -> Bool {
+        guard !name.isEmpty, !name.contains("/") else { return false }
+        do {
+            try data.write(to: directory.appendingPathComponent(name), options: .atomic)
+            cache.removeObject(forKey: name as NSString)
+            return true
+        } catch {
+            log.error("write photo failed: \(error.localizedDescription)")
+            return false
+        }
+    }
+
+    /// 备份用：磁盘上现有的所有图片文件名
+    func storedNames() -> [String] {
+        let items = (try? FileManager.default.contentsOfDirectory(at: directory,
+                                                                includingPropertiesForKeys: nil)) ?? []
+        return items.map { $0.lastPathComponent }.filter { !$0.hasPrefix(".") }
+    }
+
+    /// 备份用：清空 photos 目录（恢复前先腾地方）
+    func clearAll() {
+        cache.removeAllObjects()
+        try? FileManager.default.removeItem(at: directory)
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     }
 
     // MARK: - 读取
